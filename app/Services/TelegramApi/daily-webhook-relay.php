@@ -52,7 +52,12 @@
  */
 
 // ── CONFIG ──────────────────────────────────
-$targetUrl = 'https://daily.factorland.ir/api/webhook/telegram';
+// Use IP via HTTP to bypass DNS + avoid needing a :443 vhost/cert for daily.
+// DNS for daily.factorland.ir currently points to 185.143.x.x (wrong) and :443 vhost has no cert yet,
+// so we POST to http://185.8.174.229 and let the :80 vhost (with /api excluded from https redirect) handle it.
+// Once DNS → 185.8.174.229 and certbot creates :443, this will still work; can later switch to https + RESOLVE.
+$targetUrl = 'http://185.8.174.229/api/webhook/telegram';
+$targetHost = 'daily.factorland.ir';
 $logFile   = __DIR__ . '/daily-webhook-relay.log';
 
 // ── LOG HELPER ───────────────────────────────
@@ -96,9 +101,11 @@ curl_setopt_array($ch, [
     CURLOPT_URL            => $targetUrl,
     CURLOPT_POST           => true,
     CURLOPT_POSTFIELDS     => $rawBody,
-    CURLOPT_HTTPHEADER     => ['Content-Type: application/json'],
+    CURLOPT_HTTPHEADER     => ['Content-Type: application/json', 'Host: ' . $targetHost],
     CURLOPT_RETURNTRANSFER => true,
+    // HTTP has no SSL; keep these for when we switch back to https
     CURLOPT_SSL_VERIFYPEER => false,
+    CURLOPT_SSL_VERIFYHOST => false,
     CURLOPT_CONNECTTIMEOUT => 8,
     CURLOPT_TIMEOUT        => 20,
 ]);
