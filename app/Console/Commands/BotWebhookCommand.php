@@ -46,8 +46,19 @@ class BotWebhookCommand extends Command
         // set
         $url = $this->option('url');
         if (!$url) {
-            $this->error('For set action, provide --url=https://yourdomain/api/webhook/'.$platform);
+            if ($platform === 'telegram') {
+                $this->error('For telegram, use relay URL: --url=https://tm.factorland.ir/daily-webhook-relay.php');
+                $this->line('  (relay → https://daily.factorland.ir/api/webhook/telegram)');
+                $this->line('  Local/test: --url=https://YOUR_DOMAIN/api/webhook/telegram');
+            } else {
+                $this->error('For set action, provide --url=https://daily.factorland.ir/api/webhook/'.$platform);
+            }
             return 1;
+        }
+        if ($platform === 'telegram' && str_contains($url, 'daily.factorland.ir/api/webhook/telegram')) {
+            $this->warn('Heads-up: Telegram webhook is set directly to daily.factorland.ir');
+            $this->warn('Prod should use relay: https://tm.factorland.ir/daily-webhook-relay.php');
+            $this->warn('(Bale is fine direct; Telegram needs relay — see docs/connect2server.md)');
         }
         $res = $api->setWebhook($url);
         $this->line(json_encode($res, JSON_PRETTY_PRINT | JSON_UNESCAPED_UNICODE));

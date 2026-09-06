@@ -46,19 +46,36 @@ php artisan serve  # http://127.0.0.1:8000
 
 DB پیش‌فرض **sqlite** است: `database/database.sqlite` (pdo_sqlite باید در php.ini فعال باشد).
 
+## هاست واسط (Telegram proxy + webhook relay)
+
+معماری دقیقاً مثل `api.factorland.ir` — همان VPS خارجی (`tm.factorland.ir` / `tg.factorland.ir`) هم پراکسی خروجی و هم رله‌ی وب‌هوک را برای MyDaily انجام می‌دهد. جزئیات کامل در `docs/connect2server.md` بخش **Telegram Proxy / Webhook Relay**.
+
+| جهت | تلگرام | بله |
+|---|---|---|
+| **خروجی** (Laravel → Bot API) | از طریق `TELEGRAM_PROXY_URL=https://tm.factorland.ir/telegram-proxy.php` (فیلتر ایران) | مستقیم `tapi.bale.ai` |
+| **ورودی** (Telegram → Laravel) | وب‌هوک روی رله: `https://tm.factorland.ir/daily-webhook-relay.php` → فوروارد به `https://daily.factorland.ir/api/webhook/telegram` | مستقیم `https://daily.factorland.ir/api/webhook/bale` |
+
+سورسِ پراکسی/رله در `app/Services/TelegramApi/` است و با دست روی VPS دیپلوی می‌شود — خود Laravel آن‌ها را اجرا نمی‌کند.
+
 ## Webhook
 
 ```
-Telegram: POST https://YOUR_DOMAIN/api/webhook/telegram
-Bale:     POST https://YOUR_DOMAIN/api/webhook/bale
+# پروداکشن (ایران سرور) — حتماً این‌ها:
+Telegram: https://tm.factorland.ir/daily-webhook-relay.php   (رله → daily.factorland.ir)
+Bale:     POST https://daily.factorland.ir/api/webhook/bale   (مستقیم)
+# لوکال/تست:
+# Telegram: POST https://YOUR_DOMAIN/api/webhook/telegram
 ```
 
 با artisan:
 
 ```bash
-# ست کردن
+# پروداکشن — تلگرام روی رله، بله مستقیم
+php artisan bot:webhook telegram set --url=https://tm.factorland.ir/daily-webhook-relay.php
+php artisan bot:webhook bale set --url=https://daily.factorland.ir/api/webhook/bale
+
+# لوکال (بدون پراکسی/رله)
 php artisan bot:webhook telegram set --url=https://YOUR_DOMAIN/api/webhook/telegram
-php artisan bot:webhook bale set --url=https://YOUR_DOMAIN/api/webhook/bale
 
 # وضعیت
 php artisan bot:webhook telegram info
@@ -68,7 +85,7 @@ php artisan bot:webhook bale info
 php artisan bot:webhook telegram delete
 ```
 
-> نکته‌ی پروکسی (مثل factorland): روی سرور ایران `TELEGRAM_PROXY_URL` به `https://tm.factorland.ir/telegram-proxy.php` اشاره می‌کند. لوکال نیازی نیست. کد `BotApi` هم proxy و هم direct را ساپورت می‌کند (منطق کپی‌شده از `E:\factorland_localhost\app\Services\TelegramApi\TelegramApi.php`).
+> نکته‌ی پراکسی: روی سرور ایران `TELEGRAM_PROXY_URL=https://tm.factorland.ir/telegram-proxy.php` (مشترک با factorland). لوکال خالی بگذار — `BotApi` هم proxy و هم direct را ساپورت می‌کند (منطق کپی‌شده از `E:\factorland_localhost\app\Services\TelegramApi\TelegramApi.php`). فالبک: `https://tg.factorland.ir/telegram-proxy.php` + `https://tg.factorland.ir/daily-webhook-relay.php`.
 
 ## دستورات ربات
 
