@@ -176,8 +176,30 @@ class DailyBotService
 
     private function startLogging(string $chatId, string $platform): void
     {
-        $this->setState($chatId, $platform, 'waiting_sleep', []);
-        $this->api->sendMessage($chatId, "شروع می‌کنیم! 📝\n\n۱/۸ — ساعت خوابت کی بود؟\nمثال: 23:30 یا 00:15\n(برای لغو /cancel)");
+        $today = Carbon::today()->toDateString();
+        $yesterday = Carbon::yesterday()->toDateString();
+
+        $hasYesterday = DailyEntry::where('chat_id', $chatId)
+            ->where('platform', $platform)
+            ->whereDate('entry_date', $yesterday)
+            ->exists();
+
+        // Only offer "yesterday" if it was not logged yet — minimal, non-nagging
+        if (!$hasYesterday) {
+            $todayShamsi = \App\Helpers\ShamsiDateHelper::dateWithDay(Carbon::today());
+            $yesterdayShamsi = \App\Helpers\ShamsiDateHelper::dateWithDay(Carbon::yesterday());
+            $this->setState($chatId, $platform, 'waiting_date_choice', []);
+            $text = "دیروز ({$yesterdayShamsi}) رو ثبت نکردی.\nکدوم روز رو می‌خوای ثبت کنی؟\n(امروز: {$todayShamsi})";
+            $keyboard = [
+                ['دیروز', 'امروز'],
+                ["📝 دیروز — {$yesterdayShamsi}", "📝 امروز — {$todayShamsi}"],
+            ];
+            $this->api->sendMessageWithKeyboard($chatId, $text, $keyboard);
+            return;
+        }
+
+        $this->setState($chatId, $platform, 'waiting_sleep', ['entry_date' => $today]);
+        $this->api->sendMessage($chatId, "شروع می‌کنیم! 📝\n\n۱/۸ — ساعت خوابت کی بود؟\nمثال: 23:30 یا 6 صبح یا 7 عصر\n(برای لغو /cancel)");
     }
 
     private function handleToday(string $chatId, string $platform): void
@@ -240,24 +262,52 @@ class DailyBotService
             return;
         }
 
+        // 0) Date choice — only shown when yesterday is missing
+        if ($current === 'waiting_date_choice') {
+            $normalized = mb_strtolower(trim($input));
+            // Accept "دیروز", "📝 دیروز", "yesterday", or any string containing دیروز
+            $isYesterday = mb_strpos($normalized, 'دیروز') !== false || mb_strpos($normalized, 'yesterday') !== false;
+            $isToday = mb_strpos($normalized, 'امروز') !== false || mb_strpos($normalized, 'today') !== false
+                || mb_strpos($normalized, 'الان') !== false;
+
+            // If user typed a button with Shamsi suffix, it still contains keyword
+            if ($isYesterday && !$isToday) {
+                $data['entry_date'] = Carbon::yesterday()->toDateString();
+            } elseif ($isToday && !$isYesterday) {
+                $data['entry_date'] = Carbon::today()->toDateString();
+            } elseif ($isYesterday && $isToday) {
+                // ambiguous — prioritize yesterday button exact match handled above, fallback to reprompt
+                $this->api->sendMessageWithKeyboard($chatId, "لطفا یکی رو انتخاب کن:", [['دیروز', 'امروز']]);
+                return;
+            } else {
+                $this->api->sendMessageWithKeyboard($chatId, "لطفا «دیروز» یا «امروز» رو انتخاب کن:", [['دیروز', 'امروز']]);
+                return;
+            }
+            $this->setState($chatId, $platform, 'waiting_sleep', $data);
+            $this->api->sendMessage($chatId, "شروع می‌کنیم! 📝\n\n۱/۸ — ساعت خوابت کی بود؟\nمثال: 23:30 یا 6 صبح یا 7 عصر\n(برای لغو /cancel)");
+            return;
+        }
+
         // Validation + save to data + advance
         switch ($current) {
             case 'waiting_sleep':
-                if (!$this->isValidTime($input)) {
-                    $this->api->sendMessage($chatId, "فرمت ساعت درست نیست. مثال: 23:30 یا 01:15\nدوباره بفرست:");
+                $parsed = $this->parseFlexibleTime($input);
+                if ($parsed === null) {
+                    $this->api->sendMessage($chatId, "ساعت رو درست متوجه نشدم 😅\nمثلا بفرست: 23:30 یا 6 صبح یا 7 عصر یا فقط 6\nدوباره بفرست:");
                     return;
                 }
-                $data['sleep_time'] = $this->normalizeTime($input);
+                $data['sleep_time'] = $parsed;
                 $this->setState($chatId, $platform, 'waiting_wake', $data);
-                $this->api->sendMessage($chatId, "۲/۸ — ساعت بیداریت؟\nمثال: 07:00");
+                $this->api->sendMessage($chatId, "۲/۸ — ساعت بیداریت؟\nمثال: 07:00 یا 6 صبح");
                 break;
 
             case 'waiting_wake':
-                if (!$this->isValidTime($input)) {
-                    $this->api->sendMessage($chatId, "فرمت ساعت درست نیست. مثال: 07:00\nدوباره بفرست:");
+                $parsed = $this->parseFlexibleTime($input);
+                if ($parsed === null) {
+                    $this->api->sendMessage($chatId, "ساعت رو درست متوجه نشدم 😅\nمثلا بفرست: 07:00 یا 6 صبح یا فقط 6\nدوباره بفرست:");
                     return;
                 }
-                $data['wake_time'] = $this->normalizeTime($input);
+                $data['wake_time'] = $parsed;
                 $this->setState($chatId, $platform, 'waiting_work', $data);
                 $this->api->sendMessage($chatId, "۳/۸ — چند ساعت کار مفید کردی؟\nعدد بفرست مثلا: 6 یا 4.5 (بین 0 تا 16)");
                 break;
@@ -329,11 +379,14 @@ class DailyBotService
 
     private function saveEntry(string $chatId, string $platform, array $data): void
     {
-        // Use whereDate-compatible lookup to avoid sqlite "2026-09-06" vs "2026-09-06 00:00:00" mismatch
-        $today = Carbon::today()->toDateString();
+        // Use entry_date from flow (today or yesterday) — fallback to today for legacy states
+        $targetDate = $data['entry_date'] ?? Carbon::today()->toDateString();
+        // Ensure YYYY-MM-DD format
+        try { $targetDate = Carbon::parse($targetDate)->toDateString(); } catch (\Throwable $e) { $targetDate = Carbon::today()->toDateString(); }
+
         $existing = DailyEntry::where('chat_id', $chatId)
             ->where('platform', $platform)
-            ->whereDate('entry_date', $today)
+            ->whereDate('entry_date', $targetDate)
             ->first();
 
         $attrs = [
@@ -354,7 +407,7 @@ class DailyBotService
             $entry = DailyEntry::create(array_merge([
                 'chat_id' => $chatId,
                 'platform' => $platform,
-                'entry_date' => $today,
+                'entry_date' => $targetDate,
             ], $attrs));
         }
 
@@ -400,15 +453,82 @@ class DailyBotService
         BotState::where('chat_id', $chatId)->where('platform', $platform)->delete();
     }
 
+    /**
+     * Flexible time parser — product-minimal.
+     * Accepts: 23:30, 23.30, 6 صبح, 6:30 صبح, ۶ صبح, 7 عصر, 6 شب, 12 ظهر, 6, 06, 18, 6am, 6pm
+     * Returns normalized HH:MM or null.
+     * DB stays HH:MM — no schema change.
+     */
+    private function parseFlexibleTime(string $input): ?string
+    {
+        $raw = trim($input);
+        if ($raw === '') return null;
+
+        // 1) Persian/Arabic digits → English
+        $persian = ['۰','۱','۲','۳','۴','۵','۶','۷','۸','۹'];
+        $arabic  = ['٠','١','٢','٣','٤','٥','٦','٧','٨','٩'];
+        $english = ['0','1','2','3','4','5','6','7','8','9'];
+        $raw = str_replace($persian, $english, $raw);
+        $raw = str_replace($arabic, $english, $raw);
+
+        $lower = mb_strtolower($raw);
+
+        // Remove filler words
+        $lower = str_replace(['ساعت', 'حدودا', 'حدوداً', 'حدود', 'تقریبا', 'تقریباً'], ' ', $lower);
+        $lower = trim(preg_replace('/\s+/', ' ', $lower));
+
+        // 2) Detect am/pm keywords
+        $isPM = false;
+        $isAM = false;
+        $pmKeywords = ['عصر', 'شب', 'ظهر', 'بعدازظهر', 'بعد از ظهر', 'شام', 'pm', 'p.m', 'بعدظهر'];
+        $amKeywords = ['صبح', 'بامداد', 'am', 'a.m'];
+
+        foreach ($pmKeywords as $kw) {
+            if (mb_strpos($lower, $kw) !== false) { $isPM = true; break; }
+        }
+        foreach ($amKeywords as $kw) {
+            if (mb_strpos($lower, $kw) !== false) { $isAM = true; break; }
+        }
+        // If both detected, prefer PM (e.g. typo) — but usually only one
+
+        // 3) Extract hour/minute — accept : . / - as separator
+        if (!preg_match('/(\d{1,2})(?:\s*[:\.\-\/]\s*(\d{1,2}))?/', $lower, $m)) {
+            return null;
+        }
+        $hour = (int)$m[1];
+        $minute = isset($m[2]) && $m[2] !== '' ? (int)$m[2] : 0;
+
+        if ($minute < 0 || $minute > 59) return null;
+
+        // 4) Apply am/pm conversion
+        if ($isPM && !$isAM) {
+            // 12 ظهر = noon, 12 شب = midnight
+            if (mb_strpos($lower, 'شب') !== false && $hour == 12) {
+                $hour = 0; // 12 شب → 00:xx
+            } elseif ($hour >= 1 && $hour <= 11) {
+                $hour += 12;
+            } elseif ($hour == 12) {
+                $hour = 12; // 12 ظهر stays 12
+            }
+        } elseif ($isAM && !$isPM) {
+            if ($hour == 12) $hour = 0; // 12 صبح = 00:xx
+        }
+        // No keyword: keep as-is — bare "6" means 06:00, "18" means 18:00
+
+        if ($hour < 0 || $hour > 23) return null;
+
+        return sprintf('%02d:%02d', $hour, $minute);
+    }
+
+    // Legacy strict check kept for reference (unused) — use parseFlexibleTime instead
     private function isValidTime(string $input): bool
     {
-        return preg_match('/^([01]?\d|2[0-3]):[0-5]\d$/', trim($input)) === 1;
+        return $this->parseFlexibleTime($input) !== null;
     }
 
     private function normalizeTime(string $input): string
     {
-        $parts = explode(':', trim($input));
-        return sprintf('%02d:%02d', (int)$parts[0], (int)$parts[1]);
+        return $this->parseFlexibleTime($input) ?? '00:00';
     }
 
     private function parseYesNo(string $input): ?bool
