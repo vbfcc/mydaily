@@ -219,6 +219,69 @@ class BotApi
         return $this->sendRequest('answerCallbackQuery', $params);
     }
 
+    public function sendDocument($chatId, string $filePath, ?string $fileName = null, ?string $caption = null): array
+    {
+        try {
+            if (!file_exists($filePath)) {
+                Log::error("[{$this->getCurrentPlatform()}] sendDocument: file not found {$filePath}");
+                return ['ok' => false, 'error' => true, 'message' => 'File not found'];
+            }
+            $fileName = $fileName ?? basename($filePath);
+            $platform = $this->getCurrentPlatform();
+            $proxyUrl = $this->getProxyUrl();
+
+            $captionSanitized = $caption !== null && $platform === 'bale' ? $this->stripHtmlForBale($caption) : $caption;
+
+            if ($platform === 'bale') {
+                $url = $this->getBaseUrl() . 'sendDocument';
+                $response = Http::attach('document', file_get_contents($filePath), $fileName)
+                    ->timeout(60)
+                    ->post($url, [
+                        'chat_id' => $chatId,
+                        'caption' => $captionSanitized,
+                    ]);
+                return $response->json() ?? ['ok' => false, 'error' => true, 'message' => 'Empty response'];
+            }
+
+            if ($proxyUrl) {
+                // Proxy expects file in $_FILES['document']
+                $response = Http::attach('document', file_get_contents($filePath), $fileName)
+                    ->timeout(60)
+                    ->post($proxyUrl, [
+                        'method' => 'sendDocument',
+                        'bot_token' => $this->getBotToken(),
+                        'params' => json_encode([
+                            'chat_id' => $chatId,
+                            'caption' => $caption,
+                        ]),
+                    ]);
+                $raw = $response->body();
+                $json = json_decode($raw, true);
+                if ($json === null) {
+                    Log::error("[telegram] sendDocument proxy invalid JSON", ['body' => substr($raw, 0, 500)]);
+                    return ['ok' => false, 'error' => true, 'message' => 'Invalid JSON from proxy'];
+                }
+                if (isset($json['ok']) && $json['ok'] === false) {
+                    Log::warning("[telegram] sendDocument proxy error", ['desc' => $json['description'] ?? 'unknown']);
+                }
+                return $json;
+            }
+
+            // Direct Telegram (no proxy)
+            $url = $this->getBaseUrl() . 'sendDocument';
+            $response = Http::attach('document', file_get_contents($filePath), $fileName)
+                ->timeout(60)
+                ->post($url, [
+                    'chat_id' => $chatId,
+                    'caption' => $caption,
+                ]);
+            return $response->json() ?? ['ok' => false, 'error' => true, 'message' => 'Empty response'];
+        } catch (\Exception $e) {
+            Log::error("[{$this->getCurrentPlatform()}] sendDocument Error: {$e->getMessage()}");
+            return ['ok' => false, 'error' => true, 'message' => $e->getMessage()];
+        }
+    }
+
     public function setWebhook(?string $url, bool $unset = false): array
     {
         $webhookUrl = $unset ? '' : $url;

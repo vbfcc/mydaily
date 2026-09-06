@@ -26,6 +26,7 @@ MyDaily یک پروژه‌ی بسیار ساده برای ثبت فعالیت‌
 - **استیت جدا برای هر چت:** `bot_states` با `UNIQUE(chat_id, platform)` — دو کاربر همزمان در مرحله‌های مختلف باشند تداخل نمی‌کنند.
 - **overwrite روزانه:** یک روز = یک ردیف. لاگ دوم همان روز آپدیت است، نه Insert جدید.
 - **دو پلتفرم با یک کد:** `BotApi` به‌صورت داینامیک پلتفرم را انتخاب می‌کند (`new BotApi('bale')` یا `app('current_platform')`) — بله مستقیم، تلگرام از طریق `TELEGRAM_PROXY_URL` (ایران فیلتر).
+- **خروجی شمسی:** همه‌ی خروجی‌ها (`Excel`/`CSV`/`JSON`) تاریخ را هم میلادی هم شمسی می‌دهند — via `App\Helpers\ShamsiDateHelper` (کپی factorland) + `morilog/jalali`. ربات: `/export` → Excel با `تاریخ شمسی` + `روز هفته شمسی` + پیش‌نمایش JSON برای AI. API: `GET /api/export?format=excel|csv|json`.
 - **بدون وب UI:** فقط API وب‌هوک و دستورات ربات.
 
 ## تکنولوژی
@@ -42,28 +43,35 @@ MyDaily یک پروژه‌ی بسیار ساده برای ثبت فعالیت‌
 ```
 E:\mydayli\
 ├─ app/
+│  ├─ Helpers/
+│  │  └─ ShamsiDateHelper.php    # کپی factorland — Jalalian::forge
 │  ├─ Services/
 │  │  ├─ BotApi.php              # پراکسی تلگرام + مستقیم بله (کپی منطق factorland)
-│  │  └─ DailyBotService.php     # استیت‌ماشین ۸ مرحله‌ای، /today, /week
+│  │  ├─ DailyBotService.php     # استیت‌ماشین ۸ مرحله‌ای، /today, /week, /export
+│  │  └─ ExportService.php       # Excel/CSV/JSON با ShamsiDateHelper (PhpSpreadsheet)
 │  ├─ Http/Controllers/
-│  │  └─ BotWebhookController.php # telegram() / bale() → DailyBotService
+│  │  ├─ BotWebhookController.php # telegram() / bale() → DailyBotService
+│  │  └─ ExportController.php    # GET /api/export?format=...
 │  ├─ Models/
 │  │  ├─ DailyEntry.php
 │  │  └─ BotState.php
 │  └─ Console/Commands/
-│     └─ BotWebhookCommand.php   # php artisan bot:webhook {platform} {set|delete|info}
+│     ├─ BotWebhookCommand.php   # php artisan bot:webhook {platform} {set|delete|info}
+│     └─ DailyExportCommand.php  # php artisan daily:export --format=...
 ├─ database/migrations/
 │  ├─ ..._create_daily_entries_table.php
 │  └─ ..._create_bot_states_table.php
-├─ routes/api.php                # POST /api/webhook/telegram, /api/webhook/bale, GET /api/health
+├─ routes/api.php                # POST /api/webhook/telegram, /api/webhook/bale, GET /api/health, GET /api/export
 ├─ config/                       # بدون config اختصاصی برای توکن — env() مستقیم
 ├─ docs/
 │  ├─ overview.md               # همین فایل
 │  ├─ bot.md                    # جزئیات ربات و فلو
 │  ├─ deployment.md             # نصب لوکال + دیپلوی سرور + SSL + وب‌هوک
+│  ├─ export.md                 # خروجی شمسی (Excel/CSV/JSON)
 │  ├─ database.md               # اسکیمای جداول
 │  └─ connect2server.md         # SSH + مسیرها + دامنه
 ├─ public/                       # DocumentRoot
+├─ storage/app/exports/          # خروجی‌های Excel
 ├─ storage/ & bootstrap/cache/   # نیاز به chown www-data
 └─ .env / .env.example           # TELEGRAM_BOT_TOKEN, BALE_BOT_TOKEN, TELEGRAM_PROXY_URL
 ```
@@ -93,7 +101,8 @@ E:\mydayli\
 ## مرتبط
 
 - `docs/bot.md` — دستورات و فلو مرحله‌ای
+- `docs/export.md` — خروجی شمسی (Excel/CSV/JSON) با ShamsiDateHelper
 - `docs/database.md` — جداول و ایندکس‌ها
 - `docs/deployment.md` — نصب، Apache، SSL، وب‌هوک
-- `docs/connect2server.md` — SSH و مسیر سرور
+- `docs/connect2server.md` — SSH و مسیر سرور (فریمورک + مسیرها)
 - `README.md` — خلاصه و راهنمای سریع

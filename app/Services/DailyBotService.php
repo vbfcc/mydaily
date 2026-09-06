@@ -57,8 +57,8 @@ class DailyBotService
 
         // If in a flow, handle step input before checking other commands
         if ($state && $state->state !== null) {
-            // Allow /start /today /week to interrupt flow
-            if (in_array($text, ['/start', '/today', '/week', '/log'])) {
+            // Allow /start /today /week /export to interrupt flow
+            if (in_array($text, ['/start', '/today', '/week', '/log', '/export', '/help'])) {
                 $this->clearState($chatId, $platform);
                 // fall through to command handling below
             } else {
@@ -73,10 +73,13 @@ class DailyBotService
             $text === '/log' => $this->startLogging($chatId, $platform),
             $text === '/today' => $this->handleToday($chatId, $platform),
             $text === '/week' => $this->handleWeek($chatId, $platform),
+            $text === '/export' => $this->handleExport($chatId, $platform),
             $text === '/help' => $this->handleStart($chatId),
             $text === '📝 ثبت امروز' => $this->startLogging($chatId, $platform),
             $text === '📊 امروز' => $this->handleToday($chatId, $platform),
             $text === '📅 هفته' => $this->handleWeek($chatId, $platform),
+            $text === '📊 خروجی' => $this->handleExport($chatId, $platform),
+            $text === '📥 اکسل' => $this->handleExport($chatId, $platform),
             default => $this->handleUnknown($chatId),
         };
     }
@@ -104,19 +107,71 @@ class DailyBotService
             . "/log — شروع ثبت امروز (مرحله به مرحله)\n"
             . "/today — نمایش ثبت امروز\n"
             . "/week — نمایش ۷ روز گذشته\n"
+            . "/export — خروجی اکسل + JSON با تاریخ شمسی\n"
             . "/cancel — لغو ثبت جاری\n\n"
             . "برای شروع /log را بزن.";
 
         $keyboard = [
             ['📝 ثبت امروز', '📊 امروز'],
-            ['📅 هفته', '/help'],
+            ['📅 هفته', '📊 خروجی'],
+            ['/export', '/help'],
         ];
         $this->api->sendMessageWithKeyboard($chatId, $text, $keyboard);
     }
 
+    private function handleExport(string $chatId, string $platform): void
+    {
+        try {
+            $exportService = new ExportService();
+            $entries = $exportService->getEntries($chatId, $platform);
+
+            if ($entries->isEmpty()) {
+                $this->api->sendMessage($chatId, "هنوز هیچ ثبتی نداری که خروجی بدم.\nبا /log شروع کن، بعد /export را بزن.");
+                return;
+            }
+
+            $this->api->sendMessage($chatId, "⏳ در حال ساخت خروجی با تاریخ شمسی...");
+
+            // Generate Excel with Shamsi dates
+            $fileName = "mydaily-{$chatId}-{$platform}-" . now()->format('Y-m-d') . ".xlsx";
+            $filePath = storage_path("app/exports/{$fileName}");
+            $exportService->generateExcel($entries, $filePath);
+
+            // Also generate JSON for AI (Shamsi + Miladi) — send as second file if you want, here we just mention it
+            // For bot, we send Excel; JSON is available via API: GET /api/export?format=json
+
+            $shamsiCount = $entries->count();
+            $firstShamsi = \App\Helpers\ShamsiDateHelper::dateWithDay($entries->first()->entry_date);
+            $lastShamsi = \App\Helpers\ShamsiDateHelper::dateWithDay($entries->last()->entry_date);
+
+            $caption = "📊 خروجی MyDaily\n"
+                . "تعداد رکورد: {$shamsiCount}\n"
+                . "بازه: {$firstShamsi} تا {$lastShamsi}\n"
+                . "تاریخ‌ها شمسی + میلادی (ستون‌های A-C)\n"
+                . "فرمت‌های دیگر: /api/export?format=json|csc — با ShamsiDateHelper";
+
+            $result = $this->api->sendDocument($chatId, $filePath, $fileName, $caption);
+
+            if (($result['ok'] ?? false) !== true) {
+                Log::warning("[{$platform}] export sendDocument failed", ['result' => $result]);
+                $this->api->sendMessage($chatId, "❌ ارسال فایل ناموفق بود. لطفاً دوباره /export را بزن.\nخطا: " . ($result['description'] ?? 'unknown'));
+                return;
+            }
+
+            // Also send JSON preview for AI (first 3 rows)
+            $jsonPreview = json_encode($exportService->toArrayWithShamsi($entries->take(2)), JSON_UNESCAPED_UNICODE|JSON_PRETTY_PRINT);
+            $this->api->sendMessage($chatId, "🤖 نمونه JSON برای هوش مصنوعی (۲ ردیف اول):\n```\n" . mb_substr($jsonPreview, 0, 3500) . "\n```\nکل JSON via API: /api/export?format=json");
+
+            // Optional: clean up after 5 min? keep for now
+        } catch (\Throwable $e) {
+            Log::error("[{$platform}] handleExport error: " . $e->getMessage(), ['trace' => $e->getTraceAsString()]);
+            $this->api->sendMessage($chatId, "❌ خطا در ساخت خروجی: " . $e->getMessage());
+        }
+    }
+
     private function handleUnknown(string $chatId): void
     {
-        $this->api->sendMessage($chatId, "متوجه نشدم 🤔\nبرای ثبت امروز /log و برای دیدن امروز /today را بزن. راهنما: /start");
+        $this->api->sendMessage($chatId, "متوجه نشدم 🤔\nبرای ثبت امروز /log و برای دیدن امروز /today را بزن. راهنما: /start\nیا /export برای خروجی اکسل با تاریخ شمسی");
     }
 
     private function startLogging(string $chatId, string $platform): void
