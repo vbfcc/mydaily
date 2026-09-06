@@ -199,7 +199,8 @@ class DailyBotService
         }
 
         $this->setState($chatId, $platform, 'waiting_sleep', ['entry_date' => $today]);
-        $this->api->sendMessage($chatId, "شروع می‌کنیم! 📝\n\n۱/۸ — ساعت خوابت کی بود؟\nمثال: 23:30 یا 6 صبح یا 7 عصر\n(برای لغو /cancel)");
+        $shamsiToday = \App\Helpers\ShamsiDateHelper::dateWithDay(Carbon::parse($today));
+        $this->api->sendMessage($chatId, "شروع می‌کنیم! 📝\n📅 {$shamsiToday} — ثبت امروز\n\n۱/۸ — ساعت خوابت کی بود؟\nمثال: 23:30 یا 6 صبح یا 7 عصر\n(برای لغو /cancel)");
     }
 
     private function handleToday(string $chatId, string $platform): void
@@ -284,7 +285,9 @@ class DailyBotService
                 return;
             }
             $this->setState($chatId, $platform, 'waiting_sleep', $data);
-            $this->api->sendMessage($chatId, "شروع می‌کنیم! 📝\n\n۱/۸ — ساعت خوابت کی بود؟\nمثال: 23:30 یا 6 صبح یا 7 عصر\n(برای لغو /cancel)");
+            $shamsiChosen = \App\Helpers\ShamsiDateHelper::dateWithDay(Carbon::parse($data['entry_date']));
+            $label = $data['entry_date'] === Carbon::today()->toDateString() ? 'ثبت امروز' : 'ثبت دیروز';
+            $this->api->sendMessage($chatId, "شروع می‌کنیم! 📝\n📅 {$shamsiChosen} — {$label}\n\n۱/۸ — ساعت خوابت کی بود؟\nمثال: 23:30 یا 6 صبح یا 7 عصر\n(برای لغو /cancel)");
             return;
         }
 
@@ -423,7 +426,8 @@ class DailyBotService
         $gym = $e->gym ? 'بله ✅' : 'خیر ❌';
         $social = $e->social ? 'بله ✅' : 'خیر ❌';
         $trigger = $e->emotional_trigger ? "\n💭 محرک: {$e->emotional_trigger}" : "\n💭 محرک: —";
-        return "{$title} ({$e->entry_date->format('Y-m-d')})\n"
+        $shamsi = \App\Helpers\ShamsiDateHelper::dateWithDay($e->entry_date);
+        return "{$title} ({$e->entry_date->format('Y-m-d')} — {$shamsi})\n"
             . "😴 خواب: {$e->sleep_time} → {$e->wake_time}\n"
             . "💼 کار مفید: {$e->work_hours} ساعت\n"
             . "🏋️ باشگاه: {$gym}\n"
