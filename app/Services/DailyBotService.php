@@ -416,7 +416,7 @@ class DailyBotService
 
         $keyboard = [
             ['📝 ثبت امروز', '📊 امروز'],
-            ['📅 هفته'],
+            ['📅 هفته', '📊 خروجی'],
         ];
         $this->api->sendMessageWithKeyboard($chatId, $this->formatEntry($entry, "✅ ثبت شد!"), $keyboard);
     }
