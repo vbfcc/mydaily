@@ -67,19 +67,30 @@ class DailyBotService
             }
         }
 
-        // Command routing
+        // Command routing — /export with optional format: /export json | /export excel | /export csv
+        if (str_starts_with($text, '/export')) {
+            $parts = preg_split('/\s+/', trim($text));
+            $fmt = strtolower($parts[1] ?? '');
+            $fmt = in_array($fmt, ['json', 'excel', 'xlsx', 'csv'], true) ? $fmt : null;
+            // Normalize xlsx → excel
+            if ($fmt === 'xlsx') $fmt = 'excel';
+            $this->handleExport($chatId, $platform, $fmt);
+            return;
+        }
+
         match (true) {
             $text === '/start' => $this->handleStart($chatId),
             $text === '/log' => $this->startLogging($chatId, $platform),
             $text === '/today' => $this->handleToday($chatId, $platform),
             $text === '/week' => $this->handleWeek($chatId, $platform),
-            $text === '/export' => $this->handleExport($chatId, $platform),
             $text === '/help' => $this->handleStart($chatId),
             $text === '📝 ثبت امروز' => $this->startLogging($chatId, $platform),
             $text === '📊 امروز' => $this->handleToday($chatId, $platform),
             $text === '📅 هفته' => $this->handleWeek($chatId, $platform),
-            $text === '📊 خروجی' => $this->handleExport($chatId, $platform),
-            $text === '📥 اکسل' => $this->handleExport($chatId, $platform),
+            $text === '📊 خروجی' => $this->handleExport($chatId, $platform, null),
+            $text === '📄 JSON' => $this->handleExport($chatId, $platform, 'json'),
+            $text === '📊 اکسل' => $this->handleExport($chatId, $platform, 'excel'),
+            $text === '📥 اکسل' => $this->handleExport($chatId, $platform, 'excel'),
             default => $this->handleUnknown($chatId),
         };
     }
@@ -114,12 +125,13 @@ class DailyBotService
         $keyboard = [
             ['📝 ثبت امروز', '📊 امروز'],
             ['📅 هفته', '📊 خروجی'],
-            ['/export', '/help'],
+            ['📄 JSON', '📊 اکسل'],
+            ['/help'],
         ];
         $this->api->sendMessageWithKeyboard($chatId, $text, $keyboard);
     }
 
-    private function handleExport(string $chatId, string $platform): void
+    private function handleExport(string $chatId, string $platform, ?string $requestedFormat = null): void
     {
         try {
             $exportService = new ExportService();
@@ -132,37 +144,60 @@ class DailyBotService
 
             $this->api->sendMessage($chatId, "⏳ در حال ساخت خروجی با تاریخ شمسی...");
 
-            // Generate Excel with Shamsi dates
-            $fileName = "mydaily-{$chatId}-{$platform}-" . now()->format('Y-m-d') . ".xlsx";
-            $filePath = storage_path("app/exports/{$fileName}");
-            $exportService->generateExcel($entries, $filePath);
-
-            // Also generate JSON for AI (Shamsi + Miladi) — send as second file if you want, here we just mention it
-            // For bot, we send Excel; JSON is available via API: GET /api/export?format=json
-
             $shamsiCount = $entries->count();
             $firstShamsi = \App\Helpers\ShamsiDateHelper::dateWithDay($entries->first()->entry_date);
             $lastShamsi = \App\Helpers\ShamsiDateHelper::dateWithDay($entries->last()->entry_date);
 
-            $caption = "📊 خروجی MyDaily\n"
-                . "تعداد رکورد: {$shamsiCount}\n"
-                . "بازه: {$firstShamsi} تا {$lastShamsi}\n"
-                . "تاریخ‌ها شمسی + میلادی (ستون‌های A-C)\n"
-                . "فرمت‌های دیگر: /api/export?format=json|csc — با ShamsiDateHelper";
+            $sendExcel = $requestedFormat === null || $requestedFormat === 'excel';
+            $sendJson = $requestedFormat === null || $requestedFormat === 'json';
 
-            $result = $this->api->sendDocument($chatId, $filePath, $fileName, $caption);
+            // ── Excel ──
+            if ($sendExcel) {
+                $fileName = "mydaily-{$chatId}-{$platform}-" . now()->format('Y-m-d') . ".xlsx";
+                $filePath = storage_path("app/exports/{$fileName}");
+                $exportService->generateExcel($entries, $filePath);
 
-            if (($result['ok'] ?? false) !== true) {
-                Log::warning("[{$platform}] export sendDocument failed", ['result' => $result]);
-                $this->api->sendMessage($chatId, "❌ ارسال فایل ناموفق بود. لطفاً دوباره /export را بزن.\nخطا: " . ($result['description'] ?? 'unknown'));
-                return;
+                $caption = "📊 خروجی Excel\n"
+                    . "تعداد رکورد: {$shamsiCount}\n"
+                    . "بازه: {$firstShamsi} تا {$lastShamsi}\n"
+                    . "تاریخ‌ها شمسی + میلادی (ستون‌های A-C)";
+
+                $result = $this->api->sendDocument($chatId, $filePath, $fileName, $caption);
+
+                if (($result['ok'] ?? false) !== true) {
+                    Log::warning("[{$platform}] export sendDocument excel failed", ['result' => $result]);
+                    $this->api->sendMessage($chatId, "❌ ارسال Excel ناموفق بود.\nخطا: " . ($result['description'] ?? 'unknown'));
+                }
             }
 
-            // Also send JSON preview for AI (first 3 rows)
-            $jsonPreview = json_encode($exportService->toArrayWithShamsi($entries->take(2)), JSON_UNESCAPED_UNICODE|JSON_PRETTY_PRINT);
-            $this->api->sendMessage($chatId, "🤖 نمونه JSON برای هوش مصنوعی (۲ ردیف اول):\n```\n" . mb_substr($jsonPreview, 0, 3500) . "\n```\nکل JSON via API: /api/export?format=json");
+            // ── JSON (درخواستی شما) ──
+            if ($sendJson) {
+                $jsonFileName = "mydaily-{$chatId}-{$platform}-" . now()->format('Y-m-d') . ".json";
+                $jsonFilePath = storage_path("app/exports/{$jsonFileName}");
+                $jsonArray = $exportService->toArrayWithShamsi($entries);
+                $jsonContent = json_encode($jsonArray, JSON_UNESCAPED_UNICODE | JSON_PRETTY_PRINT);
+                if (!is_dir(dirname($jsonFilePath))) mkdir(dirname($jsonFilePath), 0755, true);
+                file_put_contents($jsonFilePath, $jsonContent);
 
-            // Optional: clean up after 5 min? keep for now
+                $jsonCaption = "📄 خروجی JSON\n"
+                    . "تعداد رکورد: {$shamsiCount}\n"
+                    . "بازه: {$firstShamsi} تا {$lastShamsi}\n"
+                    . "فرمت: JSON با تاریخ شمسی + میلادی (ready for AI)";
+
+                $resultJson = $this->api->sendDocument($chatId, $jsonFilePath, $jsonFileName, $jsonCaption);
+
+                if (($resultJson['ok'] ?? false) !== true) {
+                    Log::warning("[{$platform}] export sendDocument json failed", ['result' => $resultJson]);
+                    // Fallback: send as text preview if file send fails
+                    $jsonPreview = mb_substr($jsonContent, 0, 3500);
+                    $this->api->sendMessage($chatId, "📄 JSON (preview — فایل ارسال نشد):\n```\n{$jsonPreview}\n```");
+                }
+            }
+
+            // Quick hint for next time
+            if ($requestedFormat === null) {
+                $this->api->sendMessage($chatId, "💡 دفعه بعد می‌تونی فقط یک فرمت بگیری:\n`/export json` → فقط JSON\n`/export excel` → فقط Excel\nیا از API: `GET /api/export?format=json&chat_id={$chatId}&platform={$platform}`");
+            }
         } catch (\Throwable $e) {
             Log::error("[{$platform}] handleExport error: " . $e->getMessage(), ['trace' => $e->getTraceAsString()]);
             $this->api->sendMessage($chatId, "❌ خطا در ساخت خروجی: " . $e->getMessage());
@@ -417,6 +452,7 @@ class DailyBotService
         $keyboard = [
             ['📝 ثبت امروز', '📊 امروز'],
             ['📅 هفته', '📊 خروجی'],
+            ['📄 JSON', '📊 اکسل'],
         ];
         $this->api->sendMessageWithKeyboard($chatId, $this->formatEntry($entry, "✅ ثبت شد!"), $keyboard);
     }

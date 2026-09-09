@@ -15,6 +15,8 @@
 | `/log` یا `📝 ثبت امروز` | شروع ثبت ۸ مرحله‌ای — اگر دیروز ثبت نشده باشد اول می‌پرسد «دیروز/امروز» |
 | `/today` یا `📊 امروز` | نمایش رکورد امروز همین چت |
 | `/week` یا `📅 هفته` | نمایش ۷ روز گذشته همین چت |
+| `/export` یا `📊 خروجی` | خروجی **هر دو فرمت** Excel + JSON (شمسی+میلادی). ` /export json` فقط JSON، ` /export excel` فقط Excel |
+| `📄 JSON` / `📊 اکسل` | دکمه‌های میانبر فرمت تکی |
 | `/cancel` | لغو فلو جاری (هر مرحله) |
 | `/help` | مثل `/start` |
 | `/skip` | فقط در مرحله‌ی آخر — رد کردن محرک احساسی |
@@ -24,9 +26,13 @@
 ```
 [ 📝 ثبت امروز | 📊 امروز ]
 [ 📅 هفته      | 📊 خروجی ]
-[ /export     | /help    ]
+[ 📄 JSON      | 📊 اکسل ]
+[ /help                  ]
 ```
-(`📊 خروجی` = `/export` → فایل Excel + پیش‌نمایش JSON با تاریخ شمسی)
+- `📊 خروجی` / `/export` → **هر دو فایل** (`mydaily-*.xlsx` + `mydaily-*.json`) با کپشن شمسی
+- `📄 JSON` / `/export json` → فقط `*.json` (آرایه `toArrayWithShamsi` — `date_shamsi`/`date_miladi` ready for AI)
+- `📊 اکسل` / `/export excel` → فقط `*.xlsx` ( `ExportService::generateExcel` )
+- API هم هست: `GET /api/export?format=json|excel|csv&chat_id=...&platform=telegram` (`ExportController`)
 
 کیبوردهای موقت در فلو:
 
