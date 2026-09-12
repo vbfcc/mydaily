@@ -63,7 +63,7 @@ class DailyBotService
         // If in a flow, handle step input before checking other commands
         if ($state && $state->state !== null) {
             // Allow /start /today /week /export /routine to interrupt flow
-            if (in_array($text, ['/start', '/today', '/week', '/log', '/export', '/help', '/routine', '/routines', '🔁 روتین‌ها'])) {
+            if (in_array($text, ['/start', '/today', '/week', '/log', '/export', '/help', '/routine', '/routines', '🔁 روتین‌ها', '/profile', '👤 حساب کاربری'])) {
                 $this->clearState($chatId, $platform);
                 // fall through to command handling below
             } else {
@@ -84,6 +84,10 @@ class DailyBotService
         if (str_starts_with($text, '/routine_stop')) {
             $parts = preg_split('/\s+/', trim($text));
             $this->handleRoutineStop($chatId, $platform, $parts[1] ?? null);
+            return;
+        }
+        if ($text === '/profile' || $text === '👤 حساب کاربری' || $text === '👤 پروفایل') {
+            $this->handleProfile($chatId, $platform);
             return;
         }
 
@@ -113,6 +117,9 @@ class DailyBotService
             $text === '/help' => $this->handleStart($chatId),
             $text === '/routine' => $this->handleRoutines($chatId, $platform),
             $text === '/routines' => $this->handleRoutines($chatId, $platform),
+            $text === '/profile' => $this->handleProfile($chatId, $platform),
+            $text === '👤 حساب کاربری' => $this->handleProfile($chatId, $platform),
+            $text === '👤 پروفایل' => $this->handleProfile($chatId, $platform),
             $text === '📝 ثبت امروز' => $this->startLogging($chatId, $platform),
             $text === '📊 امروز' => $this->handleToday($chatId, $platform),
             $text === '📅 هفته' => $this->handleWeek($chatId, $platform),
@@ -181,6 +188,7 @@ class DailyBotService
             . "/today — نمایش ثبت امروز\n"
             . "/week — نمایش ۷ روز گذشته\n"
             . "/routine — مدیریت روتین‌ها (مثل روتین پوستی با تاریخ شروع/پایان)\n"
+            . "/profile — حساب کاربری (نام، شناسه، تاریخ عضویت)\n"
             . "/export — خروجی JSON (با انتخاب بازه؛ فقط JSON)\n"
             . "/cancel — لغو ثبت جاری\n\n"
             . "برای شروع /log را بزن.";
@@ -188,7 +196,7 @@ class DailyBotService
         $keyboard = [
             ['📝 ثبت امروز', '📊 امروز'],
             ['📅 هفته', '📄 JSON'],
-            ['🔁 روتین‌ها', '/help'],
+            ['🔁 روتین‌ها', '👤 حساب کاربری'],
         ];
         $this->api->sendMessageWithKeyboard($chatId, $text, $keyboard);
     }
@@ -434,6 +442,24 @@ class DailyBotService
         $this->api->sendMessage($chatId, implode("\n", $lines));
     }
 
+    private function handleProfile(string $chatId, string $platform): void
+    {
+        // touchSubscriber در ابتدای handle() اجرا شده، پس رکورد حتما هست؛
+        // created_at آن = اولین تعامل = تاریخ عضویت
+        $sub = BotSubscriber::where('chat_id', $chatId)->where('platform', $platform)->first();
+        $username = ($sub && $sub->username) ? '@' . ltrim($sub->username, '@') : '—';
+        $memberSince = ($sub && $sub->created_at)
+            ? \App\Helpers\ShamsiDateHelper::dateWithDay($sub->created_at)
+            : '—';
+
+        $text = "👤 حساب کاربری\n\n"
+            . "نام کاربری: {$username}\n"
+            . "شناسه کاربری: {$chatId}\n"
+            . "تاریخ عضویت: {$memberSince}";
+
+        $this->api->sendMessage($chatId, $text);
+    }
+
     // ── Step handler ──
 
     private function handleStep(string $chatId, string $platform, string $input, BotState $state): void
@@ -657,7 +683,7 @@ class DailyBotService
         $keyboard = [
             ['📝 ثبت امروز', '📊 امروز'],
             ['📅 هفته', '📄 JSON'],
-            ['🔁 روتین‌ها', '/help'],
+            ['🔁 روتین‌ها', '👤 حساب کاربری'],
         ];
         $this->api->sendMessageWithKeyboard($chatId, $this->formatEntry($entry, "✅ ثبت شد!"), $keyboard);
     }
@@ -898,7 +924,7 @@ class DailyBotService
         $keyboard = [
             ['📝 ثبت امروز', '📊 امروز'],
             ['📅 هفته', '📄 JSON'],
-            ['🔁 روتین‌ها', '/help'],
+            ['🔁 روتین‌ها', '👤 حساب کاربری'],
         ];
         $this->api->sendMessageWithKeyboard($chatId, $this->formatEntry($entry->refresh(), "✅ ثبت شد!"), $keyboard);
     }
@@ -1003,9 +1029,14 @@ class DailyBotService
     private function touchSubscriber(string $chatId, string $platform, ?string $username = null): void
     {
         try {
+            // username فقط وقتی آپدیت شود که واقعا آمده باشد — وگرنه (مثل کال‌بک دکمه‌ها) مقدار قبلی می‌ماند
+            $attrs = ['last_seen_at' => now()];
+            if ($username !== null && trim($username) !== '') {
+                $attrs['username'] = ltrim(trim($username), '@');
+            }
             BotSubscriber::updateOrCreate(
                 ['chat_id' => $chatId, 'platform' => $platform],
-                ['username' => $username, 'last_seen_at' => now()]
+                $attrs
             );
         } catch (\Throwable $e) {
             Log::warning("[{$platform}] touchSubscriber failed: " . $e->getMessage());
