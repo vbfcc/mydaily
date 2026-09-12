@@ -15,8 +15,7 @@
 | `/log` یا `📝 ثبت امروز` | شروع ثبت ۸ مرحله‌ای — اگر دیروز ثبت نشده باشد اول می‌پرسد «دیروز/امروز» |
 | `/today` یا `📊 امروز` | نمایش رکورد امروز همین چت |
 | `/week` یا `📅 هفته` | نمایش ۷ روز گذشته همین چت |
-| `/export` یا `📊 خروجی` | خروجی **هر دو فرمت** Excel + JSON (شمسی+میلادی). ` /export json` فقط JSON، ` /export excel` فقط Excel |
-| `📄 JSON` / `📊 اکسل` | دکمه‌های میانبر فرمت تکی |
+| `/export` یا `📄 JSON` | خروجی **فقط JSON** با انتخاب بازه (اینلاین) — تاریخ شمسی+میلادی |
 | `/cancel` | لغو فلو جاری (هر مرحله) |
 | `/help` | مثل `/start` |
 | `/skip` | فقط در مرحله‌ی آخر — رد کردن محرک احساسی |
@@ -25,14 +24,25 @@
 
 ```
 [ 📝 ثبت امروز | 📊 امروز ]
-[ 📅 هفته      | 📊 خروجی ]
-[ 📄 JSON      | 📊 اکسل ]
+[ 📅 هفته      | 📄 JSON  ]
 [ /help                  ]
 ```
-- `📊 خروجی` / `/export` → **هر دو فایل** (`mydaily-*.xlsx` + `mydaily-*.json`) با کپشن شمسی
-- `📄 JSON` / `/export json` → فقط `*.json` (آرایه `toArrayWithShamsi` — `date_shamsi`/`date_miladi` ready for AI)
-- `📊 اکسل` / `/export excel` → فقط `*.xlsx` ( `ExportService::generateExcel` )
-- API هم هست: `GET /api/export?format=json|excel|csv&chat_id=...&platform=telegram` (`ExportController`)
+- `📄 JSON` / `/export` / `📊 خروجی` → منوی اینلاین بازه (فقط JSON، بدون Excel)
+- منوی اینلاین `/export`:
+  ```
+  [ این هفته (۷ روز) | ۲ هفته (۱۴ روز) ]
+  [ ۳ هفته (۲۱ روز)  | ۴ هفته (۲۸ روز) ]
+  [ این ماه: شهریور ۱۴۰۵ | ماه قبل: مرداد ۱۴۰۵ ]
+  [ شهریور ۱۴۰۵ | مرداد ۱۴۰۵ ]  // ۴ ماه اخیر شمسی جدا
+  [ تیر ۱۴۰۵ | خرداد ۱۴۰۵ ]
+  [ 📄 همه ]
+  ```
+  هر دکمه `callback_data=exp:*` → `DailyBotService::handleExportCallback` → `sendJsonExport(from,to,label)` → فایل `mydaily-*.json` با `toArrayWithShamsi` (فیلدهای `date_shamsi`/`date_miladi` ready for AI)
+  - `exp:7` = ۷ روز اخیر (`today-6` تا `today`)، `exp:14`/`21`/`28` مشابه
+  - `exp:curM` = این ماه شمسی (۱م تا امروز)، `exp:prevM` = ماه قبل کامل، `exp:sh:YYYY-MM` = ماه شمسی خاص
+  - `exp:all` = همه
+  - مستقیم `/export json` هم بدون منو «همه» را می‌دهد
+- API هم هست: `GET /api/export?format=json&chat_id=...&platform=telegram&from=YYYY-MM-DD&to=YYYY-MM-DD` (`ExportController`)
 
 کیبوردهای موقت در فلو:
 
