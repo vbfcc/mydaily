@@ -282,6 +282,11 @@ class BotApi
         }
     }
 
+    public function getMe(): array
+    {
+        return $this->sendRequest('getMe', []);
+    }
+
     public function setWebhook(?string $url, bool $unset = false): array
     {
         $webhookUrl = $unset ? '' : $url;

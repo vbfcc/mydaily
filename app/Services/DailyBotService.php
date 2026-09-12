@@ -167,6 +167,10 @@ class DailyBotService
             }
             return;
         }
+        if ($data === 'pf:share') {
+            $this->sendShareCard($chatId, $platform);
+            return;
+        }
 
         // Map callbacks to inputs for gym/social/mood steps
         $state = $this->getState($chatId, $platform);
@@ -457,7 +461,42 @@ class DailyBotService
             . "شناسه کاربری: {$chatId}\n"
             . "تاریخ عضویت: {$memberSince}";
 
-        $this->api->sendMessage($chatId, $text);
+        $this->api->sendMessageWithInlineKeyboard($chatId, $text, [
+            [['text' => '📤 معرفی به دوستان', 'callback_data' => 'pf:share']],
+        ]);
+    }
+
+    /** کارت معرفیِ فورواردی: آیدی ربات + توضیح مینیمال — کاربر برای دوستانش فوروارد می‌کند. */
+    private function sendShareCard(string $chatId, string $platform): void
+    {
+        $botUsername = null;
+        try {
+            $me = $this->api->getMe();
+            $botUsername = ($me['ok'] ?? false) ? ltrim((string) ($me['result']['username'] ?? ''), '@') : null;
+        } catch (\Throwable $e) {
+            Log::warning("[{$platform}] getMe failed: " . $e->getMessage());
+        }
+
+        $lines = [
+            "🤖 ربات MyDayli — ثبت فعالیت روزانه",
+            "",
+            "هر روز ۲ دقیقه:",
+            "😴 خواب و بیداری، 💼 کار مفید، 🏋️ باشگاه",
+            "🎮 گیم، 👥 تعامل اجتماعی، 😊 حال روزانه",
+            "🔁 روتین شخصی (مثل روتین پوستی) + یادآوری هر شب ساعت ۱۲",
+        ];
+        if ($botUsername) {
+            $link = $platform === 'bale' ? "@{$botUsername}" : "https://t.me/{$botUsername}";
+            $lines[] = "";
+            $lines[] = "👉 شروع: {$link}";
+        } else {
+            $lines[] = "";
+            $lines[] = "👉 از همین ربات شروع کن: /start";
+        }
+        $lines[] = "";
+        $lines[] = "این پیام را برای دوستانت فوروارد کن 📤";
+
+        $this->api->sendMessage($chatId, implode("\n", $lines));
     }
 
     // ── Step handler ──
