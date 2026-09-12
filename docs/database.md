@@ -19,7 +19,10 @@ database/migrations/
 ├─ 0001_01_01_000002_create_jobs_table.php
 ├─ 2026_09_06_110824_create_personal_access_tokens_table.php  # sanctum
 ├─ 2026_09_06_110834_create_daily_entries_table.php
-└─ 2026_09_06_110834_create_bot_states_table.php
+├─ 2026_09_06_110834_create_bot_states_table.php
+├─ 2026_09_13_000001_create_routines_table.php
+├─ 2026_09_13_000002_create_routine_logs_table.php
+└─ 2026_09_13_000003_create_bot_subscribers_table.php
 ```
 
 اجرای:
@@ -109,6 +112,28 @@ CREATE TABLE `bot_states` (
 - هر چت یک ردیف دارد؛ شروع `/log` → `waiting_sleep` با `data={}`, هر مرحله `data` پر می‌شود، پایان → ردیف حذف (`clearState`).
 - `/cancel` هم ردیف را حذف می‌کند.
 - مدل: `app/Models/BotState.php` — `casts: data→array`
+
+## جدول `routines`
+
+روتین‌های هر چت (مثل روتین پوستی) با بازه‌ی شروع/پایان.
+
+- `chat_id`, `platform`, `title(100)`, `starts_on(date)`, `ends_on(date)`, `is_active(bool)`
+- ایندکس `(chat_id, platform, is_active)` — مدل: `app/Models/Routine.php` (`isActiveOn($date)`)
+
+## جدول `routine_logs`
+
+جواب روزانه‌ی هر روتین.
+
+- `routine_id(FK→routines, cascade)`, `chat_id`, `platform`, `entry_date(date)`, `done(bool, nullable)`, `note(text, nullable)`
+- `UNIQUE(routine_id, entry_date)` — ثبت دوباره‌ی همان روز overwrite (`saveRoutineLogs` با `whereDate` مثل `saveEntry`)
+- مدل: `app/Models/RoutineLog.php`
+
+## جدول `bot_subscribers`
+
+همه‌ی چت‌هایی که تا حالا به ربات پیام داده‌اند — برای یادآور ۱۲ شب.
+
+- `UNIQUE(chat_id, platform)` + `username?` + `last_seen_at` — مدل: `app/Models/BotSubscriber.php`
+- با هر پیام/کال‌بک via `touchSubscriber()` به‌روز می‌شود.
 
 ## نکات
 

@@ -192,6 +192,32 @@ chown -R www-data:www-data storage bootstrap/cache
 systemctl reload apache2
 ```
 
+### Cron — یادآور ۱۲ شب (یک بار، ماندگار)
+
+اسکجولر لاراول (`routes/console.php` → `bot:remind-midnight` هر روز `00:00` به‌وقت ایران) فقط وقتی کار می‌کند که `schedule:run` هر دقیقه توسط کرون صدا زده شود. روی سرور لینوکسی:
+
+```bash
+ssh Factorland-Iran
+
+# ۱) مسیر دقیق PHP را پیدا کن (سرور PHP 8.2.30 دارد)
+which php && php -v | head -1
+# معمولاً: /usr/bin/php
+
+# ۲) کرون را برای www-data بگذار (تا storage/logs قابل‌نوشتن باشد)
+crontab -u www-data -e
+# این خط را اضافه کن (مسیر PHP را با خروجی which php جایگزین کن):
+* * * * * cd /var/www/html/my-daily && /usr/bin/php artisan schedule:run >> /dev/null 2>&1
+
+# ۳) بررسی
+crontab -u www-data -l                          # باید خط بالا را نشان بدهد
+systemctl is-active cron || service cron status  # باید active باشد
+cd /var/www/html/my-daily
+php artisan schedule:list                        # باید bot:remind-midnight را نشان بدهد
+php artisan bot:remind-midnight --dry-run        # لیست گیرندگان (بدون ارسال)
+```
+
+> نکته‌ی ساعت: `schedule:list` عبارت را به‌صورت UTC نشان می‌دهد (`30 20 * * *` یعنی `20:30 UTC` = `00:00` تهران) — این درست است، چون تایم‌زون `Asia/Tehran` داخل خود اسکجول ست شده و ساعت سرور مهم نیست.
+
 ### Bot tokens (.env روی ایران سرور)
 
 ```

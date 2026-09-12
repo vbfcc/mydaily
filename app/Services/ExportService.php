@@ -67,10 +67,29 @@ class ExportService
                 'social_bool' => (bool)$e->social,
                 'mood' => $e->mood !== null ? (int)$e->mood : null,
                 'emotional_trigger' => $e->emotional_trigger,
+                'routines' => $this->routineLogsFor($e),
                 'created_at' => $e->created_at ? $e->created_at->toIso8601String() : null,
                 'created_at_shamsi' => $e->created_at ? ShamsiDateHelper::fullDateTime($e->created_at) : null,
             ];
         })->toArray();
+    }
+
+    /**
+     * لاگ روتین‌های یک رکورد روزانه: [{title, done, done_bool, note}]
+     */
+    public function routineLogsFor(DailyEntry $e): array
+    {
+        return \App\Models\RoutineLog::with('routine')
+            ->where('chat_id', $e->chat_id)
+            ->where('platform', $e->platform)
+            ->whereDate('entry_date', Carbon::parse($e->entry_date)->toDateString())
+            ->get()
+            ->map(fn (\App\Models\RoutineLog $log) => [
+                'title' => $log->routine?->title,
+                'done' => $log->done === null ? null : ($log->done ? 'بله' : 'خیر'),
+                'done_bool' => $log->done === null ? null : (bool) $log->done,
+                'note' => $log->note,
+            ])->toArray();
     }
 
     /**

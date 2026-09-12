@@ -48,6 +48,7 @@ class DailyBotService
     public function handle(string $chatId, string $platform, string $text, ?string $username = null): void
     {
         $text = trim($text);
+        $this->touchSubscriber($chatId, $platform, $username);
 
         // If user is mid-flow, delegate to state handler (except hard commands)
         $state = $this->getState($chatId, $platform);
@@ -61,14 +62,29 @@ class DailyBotService
 
         // If in a flow, handle step input before checking other commands
         if ($state && $state->state !== null) {
-            // Allow /start /today /week /export to interrupt flow
-            if (in_array($text, ['/start', '/today', '/week', '/log', '/export', '/help'])) {
+            // Allow /start /today /week /export /routine to interrupt flow
+            if (in_array($text, ['/start', '/today', '/week', '/log', '/export', '/help', '/routine', '/routines', '🔁 روتین‌ها'])) {
                 $this->clearState($chatId, $platform);
                 // fall through to command handling below
             } else {
                 $this->handleStep($chatId, $platform, $text, $state);
                 return;
             }
+        }
+
+        // Routine commands
+        if ($text === '/routine' || $text === '/routines' || $text === '🔁 روتین‌ها' || $text === '🔁 روتین') {
+            $this->handleRoutines($chatId, $platform);
+            return;
+        }
+        if ($text === '/routine_new' || $text === '➕ روتین جدید') {
+            $this->startRoutineWizard($chatId, $platform);
+            return;
+        }
+        if (str_starts_with($text, '/routine_stop')) {
+            $parts = preg_split('/\s+/', trim($text));
+            $this->handleRoutineStop($chatId, $platform, $parts[1] ?? null);
+            return;
         }
 
         // Command routing — /export now shows inline menu (JSON only)
@@ -95,6 +111,8 @@ class DailyBotService
             $text === '/today' => $this->handleToday($chatId, $platform),
             $text === '/week' => $this->handleWeek($chatId, $platform),
             $text === '/help' => $this->handleStart($chatId),
+            $text === '/routine' => $this->handleRoutines($chatId, $platform),
+            $text === '/routines' => $this->handleRoutines($chatId, $platform),
             $text === '📝 ثبت امروز' => $this->startLogging($chatId, $platform),
             $text === '📊 امروز' => $this->handleToday($chatId, $platform),
             $text === '📅 هفته' => $this->handleWeek($chatId, $platform),
@@ -110,10 +128,36 @@ class DailyBotService
     public function handleCallback(string $chatId, string $platform, string $data, string $callbackQueryId): void
     {
         $this->api->answerCallbackQuery($callbackQueryId);
+        $this->touchSubscriber($chatId, $platform);
 
         // Export inline menu — JSON only
         if (str_starts_with($data, 'exp:')) {
             $this->handleExportCallback($chatId, $platform, $data);
+            return;
+        }
+
+        // Routine inline buttons
+        if ($data === 'rt:new') {
+            $this->clearState($chatId, $platform);
+            $this->startRoutineWizard($chatId, $platform);
+            return;
+        }
+        if (str_starts_with($data, 'rt:stop:')) {
+            $this->handleRoutineStop($chatId, $platform, substr($data, 8));
+            return;
+        }
+        if ($data === 'rt:yes' || $data === 'rt:no') {
+            $state = $this->getState($chatId, $platform);
+            if ($state && $state->state === 'waiting_routine_done') {
+                $this->handleStep($chatId, $platform, $data === 'rt:yes' ? 'بله' : 'خیر', $state);
+            }
+            return;
+        }
+        if ($data === 'rt:skip_note') {
+            $state = $this->getState($chatId, $platform);
+            if ($state && $state->state === 'waiting_routine_note') {
+                $this->handleStep($chatId, $platform, '/skip', $state);
+            }
             return;
         }
 
@@ -136,6 +180,7 @@ class DailyBotService
             . "/log — شروع ثبت امروز (مرحله به مرحله)\n"
             . "/today — نمایش ثبت امروز\n"
             . "/week — نمایش ۷ روز گذشته\n"
+            . "/routine — مدیریت روتین‌ها (مثل روتین پوستی با تاریخ شروع/پایان)\n"
             . "/export — خروجی JSON (با انتخاب بازه؛ فقط JSON)\n"
             . "/cancel — لغو ثبت جاری\n\n"
             . "برای شروع /log را بزن.";
@@ -143,7 +188,7 @@ class DailyBotService
         $keyboard = [
             ['📝 ثبت امروز', '📊 امروز'],
             ['📅 هفته', '📄 JSON'],
-            ['/help'],
+            ['🔁 روتین‌ها', '/help'],
         ];
         $this->api->sendMessageWithKeyboard($chatId, $text, $keyboard);
     }
@@ -310,7 +355,7 @@ class DailyBotService
 
     private function handleUnknown(string $chatId): void
     {
-        $this->api->sendMessage($chatId, "متوجه نشدم 🤔\nبرای ثبت امروز /log و برای دیدن امروز /today را بزن. راهنما: /start\nیا /export برای خروجی JSON با انتخاب بازه");
+        $this->api->sendMessage($chatId, "متوجه نشدم 🤔\nبرای ثبت امروز /log و برای دیدن امروز /today را بزن. راهنما: /start\nیا /export برای خروجی JSON، و /routine برای مدیریت روتین‌ها");
     }
 
     private function startLogging(string $chatId, string $platform): void
@@ -380,6 +425,10 @@ class DailyBotService
             if ($e->emotional_trigger) {
                 $lines[count($lines)-1] .= "\n  💭 {$e->emotional_trigger}";
             }
+            $routineTxt = $this->formatRoutineLogs($e->chat_id, $e->platform, Carbon::parse($e->entry_date)->toDateString());
+            if ($routineTxt !== '') {
+                $lines[count($lines)-1] .= "\n  🔁 " . str_replace("\n", "\n  ", $routineTxt);
+            }
         }
 
         $this->api->sendMessage($chatId, implode("\n", $lines));
@@ -394,11 +443,15 @@ class DailyBotService
 
         $input = trim($input);
 
-        // Handle /skip for emotional_trigger
-        if ($current === 'waiting_trigger' && ($input === '/skip' || $input === 'skip' || $input === '-')) {
-            $data['emotional_trigger'] = null;
-            $this->saveEntry($chatId, $platform, $data);
-            $this->clearState($chatId, $platform);
+        // Handle /skip for emotional_trigger and routine notes
+        if (($current === 'waiting_trigger' || $current === 'waiting_routine_note')
+            && ($input === '/skip' || $input === 'skip' || $input === '-')) {
+            if ($current === 'waiting_trigger') {
+                $data['emotional_trigger'] = null;
+                $this->proceedToRoutinesOrSave($chatId, $platform, $data);
+            } else {
+                $this->handleRoutineNote($chatId, $platform, $data, null);
+            }
             return;
         }
 
@@ -508,8 +561,86 @@ class DailyBotService
 
             case 'waiting_trigger':
                 $data['emotional_trigger'] = mb_substr($input, 0, 500);
-                $this->saveEntry($chatId, $platform, $data);
+                $this->proceedToRoutinesOrSave($chatId, $platform, $data);
+                break;
+
+            case 'waiting_routine_title':
+                $title = mb_substr(trim($input), 0, 100);
+                if ($title === '') {
+                    $this->api->sendMessage($chatId, "اسم روتین خالیه 😅\nمثلا بنویس: روتین پوستی");
+                    return;
+                }
+                $this->setState($chatId, $platform, 'waiting_routine_start', ['routine_title' => $title]);
+                $todayShamsi = \App\Helpers\ShamsiDateHelper::dateOnly(Carbon::today());
+                $this->api->sendMessage($chatId, "📅 تاریخ شروع «{$title}» کی باشه؟\n"
+                    . "مثلا: امروز، فردا، 1405/07/01 (شمسی) یا 2026-09-23 (میلادی)\n"
+                    . "(امروز: {$todayShamsi})");
+                break;
+
+            case 'waiting_routine_start':
+                $startsOn = $this->parseRoutineDate($input);
+                if ($startsOn === null) {
+                    $this->api->sendMessage($chatId, "تاریخ رو نفهمیدم 😅\nمثلا: امروز، فردا، 1405/07/01 یا 2026-09-23");
+                    return;
+                }
+                $data['routine_starts_on'] = $startsOn;
+                $this->setState($chatId, $platform, 'waiting_routine_end', $data);
+                $shamsiStart = \App\Helpers\ShamsiDateHelper::dateOnly(Carbon::parse($startsOn));
+                $this->api->sendMessage($chatId, "شروع: {$shamsiStart} ({$startsOn})\n"
+                    . "📅 تاریخ پایان کی باشه؟\n"
+                    . "مثلا: 1405/08/01 یا فقط بنویس 30 (یعنی ۳۰ روز از شروع) یا «30 روز»");
+                break;
+
+            case 'waiting_routine_end':
+                $startsOn = $data['routine_starts_on'] ?? Carbon::today()->toDateString();
+                $endsOn = $this->parseRoutineEnd($input, $startsOn);
+                if ($endsOn === null) {
+                    $this->api->sendMessage($chatId, "تاریخ پایان رو نفهمیدم 😅\nمثلا: 1405/08/01 یا فقط 30 (۳۰ روزه)");
+                    return;
+                }
+                if ($endsOn < $startsOn) {
+                    $this->api->sendMessage($chatId, "پایان ({$endsOn}) قبل از شروعه ({$startsOn})!\nیه تاریخ بعد از شروع بفرست:");
+                    return;
+                }
+                $routine = Routine::create([
+                    'chat_id' => $chatId,
+                    'platform' => $platform,
+                    'title' => $data['routine_title'],
+                    'starts_on' => $startsOn,
+                    'ends_on' => $endsOn,
+                    'is_active' => true,
+                ]);
                 $this->clearState($chatId, $platform);
+                $shamsiStart = \App\Helpers\ShamsiDateHelper::dateOnly(Carbon::parse($startsOn));
+                $shamsiEnd = \App\Helpers\ShamsiDateHelper::dateOnly(Carbon::parse($endsOn));
+                $this->api->sendMessage($chatId, "✅ روتین «{$routine->title}» فعال شد!\n📅 {$shamsiStart} تا {$shamsiEnd}\n\n"
+                    . "تا وقتی فعاله، موقع ثبت روزانه (/log) ازت می‌پرسم انجامش دادی یا نه (با دکمه بله/خیر + توضیح).");
+                $this->handleRoutines($chatId, $platform);
+                break;
+
+            case 'waiting_routine_done':
+                $val = $this->parseYesNo($input);
+                if ($val === null) {
+                    $this->askRoutineDone($chatId, $data);
+                    return;
+                }
+                $idx = $data['routine_index'] ?? 0;
+                $answers = $data['routine_answers'] ?? [];
+                $answers[$idx]['routine_id'] = $data['routine_ids'][$idx];
+                $answers[$idx]['done'] = $val;
+                $answers[$idx]['note'] = null;
+                $data['routine_answers'] = $answers;
+                $this->setState($chatId, $platform, 'waiting_routine_note', $data);
+                $routine = Routine::find($data['routine_ids'][$idx]);
+                $title = $routine?->title ?? 'روتین';
+                $emoji = $val ? '✅' : '❌';
+                $this->api->sendMessageWithInlineKeyboard($chatId,
+                    "{$emoji} «{$title}» ثبت شد.\n📝 توضیحی داری؟ (مثلا چی کار کردی یا چرا نشد)\nبنویس یا /skip بزن.",
+                    [[['text' => '⏭ رد کردن توضیح', 'callback_data' => 'rt:skip_note']]]);
+                break;
+
+            case 'waiting_routine_note':
+                $this->handleRoutineNote($chatId, $platform, $data, mb_substr($input, 0, 500));
                 break;
 
             default:
@@ -520,6 +651,19 @@ class DailyBotService
     }
 
     private function saveEntry(string $chatId, string $platform, array $data): void
+    {
+        $entry = $this->persistEntry($chatId, $platform, $data);
+
+        $keyboard = [
+            ['📝 ثبت امروز', '📊 امروز'],
+            ['📅 هفته', '📄 JSON'],
+            ['🔁 روتین‌ها', '/help'],
+        ];
+        $this->api->sendMessageWithKeyboard($chatId, $this->formatEntry($entry, "✅ ثبت شد!"), $keyboard);
+    }
+
+    /** ذخیره‌ی خام بدون پیام — برای فلو روتین که اول لاگ‌ها را ذخیره می‌کند بعد پیام می‌دهد. */
+    private function persistEntry(string $chatId, string $platform, array $data): DailyEntry
     {
         // Use entry_date from flow (today or yesterday) — fallback to today for legacy states
         $targetDate = $data['entry_date'] ?? Carbon::today()->toDateString();
@@ -544,20 +688,14 @@ class DailyBotService
 
         if ($existing) {
             $existing->update($attrs);
-            $entry = $existing->refresh();
-        } else {
-            $entry = DailyEntry::create(array_merge([
-                'chat_id' => $chatId,
-                'platform' => $platform,
-                'entry_date' => $targetDate,
-            ], $attrs));
+            return $existing->refresh();
         }
 
-        $keyboard = [
-            ['📝 ثبت امروز', '📊 امروز'],
-            ['📅 هفته', '📄 JSON'],
-        ];
-        $this->api->sendMessageWithKeyboard($chatId, $this->formatEntry($entry, "✅ ثبت شد!"), $keyboard);
+        return DailyEntry::create(array_merge([
+            'chat_id' => $chatId,
+            'platform' => $platform,
+            'entry_date' => $targetDate,
+        ], $attrs));
     }
 
     private function formatEntry(DailyEntry $e, string $title): string
@@ -566,7 +704,7 @@ class DailyBotService
         $social = $e->social ? 'بله ✅' : 'خیر ❌';
         $trigger = $e->emotional_trigger ? "\n💭 محرک: {$e->emotional_trigger}" : "\n💭 محرک: —";
         $shamsi = \App\Helpers\ShamsiDateHelper::dateWithDay($e->entry_date);
-        return "{$title} ({$e->entry_date->format('Y-m-d')} — {$shamsi})\n"
+        $text = "{$title} ({$e->entry_date->format('Y-m-d')} — {$shamsi})\n"
             . "😴 خواب: {$e->sleep_time} → {$e->wake_time}\n"
             . "💼 کار مفید: {$e->work_hours} ساعت\n"
             . "🏋️ باشگاه: {$gym}\n"
@@ -574,6 +712,304 @@ class DailyBotService
             . "👥 اجتماعی: {$social}\n"
             . "😊 حال: {$e->mood}/10"
             . $trigger;
+
+        $routineLines = $this->formatRoutineLogs($e->chat_id, $e->platform, $e->entry_date->format('Y-m-d'));
+        if ($routineLines !== '') {
+            $text .= "\n\n🔁 روتین‌ها:\n" . $routineLines;
+        }
+
+        return $text;
+    }
+
+    private function formatRoutineLogs(string $chatId, string $platform, string $dateYmd): string
+    {
+        $logs = RoutineLog::with('routine')
+            ->where('chat_id', $chatId)
+            ->where('platform', $platform)
+            ->whereDate('entry_date', $dateYmd)
+            ->get();
+
+        if ($logs->isEmpty()) return '';
+
+        $lines = [];
+        foreach ($logs as $log) {
+            $title = $log->routine?->title ?? 'روتین';
+            $mark = $log->done ? '✅ بله' : '❌ خیر';
+            $line = "• {$title}: {$mark}";
+            if ($log->note) $line .= " — {$log->note}";
+            $lines[] = $line;
+        }
+        return implode("\n", $lines);
+    }
+
+    // ── Routines ──
+
+    /** روتین‌های فعال یک چت برای یک تاریخ (فلگ + بازه‌ی شروع/پایان). */
+    public function activeRoutinesFor(string $chatId, string $platform, string $dateYmd): \Illuminate\Support\Collection
+    {
+        return Routine::where('chat_id', $chatId)
+            ->where('platform', $platform)
+            ->where('is_active', true)
+            ->whereDate('starts_on', '<=', $dateYmd)
+            ->whereDate('ends_on', '>=', $dateYmd)
+            ->orderBy('id')
+            ->get();
+    }
+
+    private function handleRoutines(string $chatId, string $platform): void
+    {
+        $today = Carbon::today()->toDateString();
+        $active = Routine::where('chat_id', $chatId)
+            ->where('platform', $platform)
+            ->where('is_active', true)
+            ->whereDate('ends_on', '>=', $today)
+            ->orderBy('starts_on')
+            ->get();
+        $past = Routine::where('chat_id', $chatId)
+            ->where('platform', $platform)
+            ->where(function ($q) use ($today) {
+                $q->where('is_active', false)->orWhereDate('ends_on', '<', $today);
+            })
+            ->orderByDesc('ends_on')
+            ->limit(5)
+            ->get();
+
+        $lines = ["🔁 روتین‌های تو:\n"];
+        if ($active->isEmpty()) {
+            $lines[] = "فعلا روتین فعالی نداری.";
+        } else {
+            $lines[] = "فعال:";
+            foreach ($active as $r) {
+                $s = \App\Helpers\ShamsiDateHelper::dateOnly($r->starts_on);
+                $e = \App\Helpers\ShamsiDateHelper::dateOnly($r->ends_on);
+                $lines[] = "• [{$r->id}] {$r->title} — {$s} تا {$e}";
+            }
+        }
+        if (!$past->isEmpty()) {
+            $lines[] = "\nتمام‌شده/متوقف:";
+            foreach ($past as $r) {
+                $tag = $r->is_active ? 'تمام‌شده' : 'متوقف';
+                $lines[] = "• [{$r->id}] {$r->title} ({$tag})";
+            }
+        }
+        $lines[] = "\nبرای ساخت روتین جدید /routine_new را بزن یا دکمه‌ی زیر.";
+        $lines[] = "توقف: /routine_stop ID";
+
+        $inline = [[['text' => '➕ روتین جدید', 'callback_data' => 'rt:new']]];
+        foreach ($active as $r) {
+            $label = mb_substr("⏹ توقف «{$r->title}»", 0, 40);
+            $inline[] = [['text' => $label, 'callback_data' => "rt:stop:{$r->id}"]];
+        }
+
+        $this->api->sendMessageWithInlineKeyboard($chatId, implode("\n", $lines), $inline);
+    }
+
+    private function startRoutineWizard(string $chatId, string $platform): void
+    {
+        $this->setState($chatId, $platform, 'waiting_routine_title', []);
+        $this->api->sendMessage($chatId, "➕ روتین جدید!\n\nاسم روتین چیه؟\nمثلا: روتین پوستی\n(برای لغو /cancel)");
+    }
+
+    private function handleRoutineStop(string $chatId, string $platform, ?string $id): void
+    {
+        if (!$id || !ctype_digit((string) $id)) {
+            $this->api->sendMessage($chatId, "آیدی روتین رو بفرست: /routine_stop ID\n(آیدی‌ها رو با /routine ببین)");
+            return;
+        }
+        $routine = Routine::where('chat_id', $chatId)
+            ->where('platform', $platform)
+            ->where('id', (int) $id)
+            ->first();
+        if (!$routine) {
+            $this->api->sendMessage($chatId, "روتینی با این آیدی پیدا نکردم.");
+            return;
+        }
+        if (!$routine->is_active) {
+            $this->api->sendMessage($chatId, "«{$routine->title}» قبلا متوقف شده.");
+            return;
+        }
+        $routine->update(['is_active' => false]);
+        $this->api->sendMessage($chatId, "⏹ روتین «{$routine->title}» متوقف شد.\nلاگ‌های قبلی سر جاشون می‌مونن.");
+        $this->handleRoutines($chatId, $platform);
+    }
+
+    /** بعد از آخرین سوال گزارش: اگر روتین فعال هست، وارد سوال‌های روتین شو وگرنه ذخیره کن. */
+    private function proceedToRoutinesOrSave(string $chatId, string $platform, array $data): void
+    {
+        $targetDate = $data['entry_date'] ?? Carbon::today()->toDateString();
+        try { $targetDate = Carbon::parse($targetDate)->toDateString(); } catch (\Throwable $e) { $targetDate = Carbon::today()->toDateString(); }
+
+        $routines = $this->activeRoutinesFor($chatId, $platform, $targetDate);
+
+        if ($routines->isEmpty()) {
+            $this->saveEntry($chatId, $platform, $data);
+            $this->clearState($chatId, $platform);
+            return;
+        }
+
+        $data['entry_date'] = $targetDate;
+        $data['routine_ids'] = $routines->pluck('id')->all();
+        $data['routine_index'] = 0;
+        $data['routine_answers'] = [];
+        $this->setState($chatId, $platform, 'waiting_routine_done', $data);
+        $this->askRoutineDone($chatId, $data);
+    }
+
+    private function askRoutineDone(string $chatId, array $data): void
+    {
+        $idx = $data['routine_index'] ?? 0;
+        $ids = $data['routine_ids'] ?? [];
+        $total = count($ids);
+        $routine = Routine::find($ids[$idx] ?? 0);
+        $title = $routine?->title ?? 'روتین';
+
+        $this->api->sendMessageWithInlineKeyboard($chatId,
+            "🔁 روتین «{$title}» (" . ($idx + 1) . " از {$total})\nامروز انجامش دادی؟",
+            [[
+                ['text' => '✅ بله', 'callback_data' => 'rt:yes'],
+                ['text' => '❌ خیر', 'callback_data' => 'rt:no'],
+            ]]);
+    }
+
+    /** ثبت توضیح روتین و رفتن به روتین بعدی یا ذخیره‌ی نهایی. */
+    private function handleRoutineNote(string $chatId, string $platform, array $data, ?string $note): void
+    {
+        $idx = $data['routine_index'] ?? 0;
+        $answers = $data['routine_answers'] ?? [];
+        $answers[$idx]['routine_id'] = $data['routine_ids'][$idx];
+        // done قبلا در مرحله‌ی waiting_routine_done ست شده؛ اگر به هر دلیلی نبود، null می‌ماند
+        $answers[$idx]['done'] = $answers[$idx]['done'] ?? null;
+        $answers[$idx]['note'] = $note ? mb_substr($note, 0, 500) : null;
+        $data['routine_answers'] = $answers;
+
+        $next = $idx + 1;
+        if ($next < count($data['routine_ids'])) {
+            $data['routine_index'] = $next;
+            $this->setState($chatId, $platform, 'waiting_routine_done', $data);
+            $this->askRoutineDone($chatId, $data);
+            return;
+        }
+
+        // همه‌ی روتین‌ها جواب داده شدند — ذخیره‌ی نهایی
+        $entry = $this->persistEntry($chatId, $platform, $data);
+        $this->saveRoutineLogs($chatId, $platform, $data['entry_date'], $answers);
+        $this->clearState($chatId, $platform);
+
+        $keyboard = [
+            ['📝 ثبت امروز', '📊 امروز'],
+            ['📅 هفته', '📄 JSON'],
+            ['🔁 روتین‌ها', '/help'],
+        ];
+        $this->api->sendMessageWithKeyboard($chatId, $this->formatEntry($entry->refresh(), "✅ ثبت شد!"), $keyboard);
+    }
+
+    private function saveRoutineLogs(string $chatId, string $platform, string $dateYmd, array $answers): void
+    {
+        foreach ($answers as $a) {
+            if (!isset($a['routine_id'])) continue;
+            // whereDate مثل saveEntry — چون entry_date از نوع date است
+            $existing = RoutineLog::where('routine_id', $a['routine_id'])
+                ->whereDate('entry_date', $dateYmd)
+                ->first();
+            $attrs = [
+                'chat_id' => $chatId,
+                'platform' => $platform,
+                'done' => $a['done'] ?? null,
+                'note' => $a['note'] ?? null,
+            ];
+            if ($existing) {
+                $existing->update($attrs);
+            } else {
+                RoutineLog::create(array_merge([
+                    'routine_id' => $a['routine_id'],
+                    'entry_date' => $dateYmd,
+                ], $attrs));
+            }
+        }
+    }
+
+    /**
+     * پارس تاریخ روتین: «امروز/فردا/دیروز»، شمسی 1405/07/01، میلادی 2026-09-23.
+     * خروجی Y-m-d میلادی یا null.
+     */
+    private function parseRoutineDate(string $input): ?string
+    {
+        $raw = trim($input);
+        if ($raw === '') return null;
+        $raw = str_replace(['۰','۱','۲','۳','۴','۵','۶','۷','۸','۹','٠','١','٢','٣','٤','٥','٦','٧','٨','٩'],
+            ['0','1','2','3','4','5','6','7','8','9'], $raw);
+        $lower = mb_strtolower($raw);
+
+        if (in_array($lower, ['امروز', 'today', 'الان', 'now'], true)) return Carbon::today()->toDateString();
+        if (in_array($lower, ['فردا', 'tomorrow'], true)) return Carbon::tomorrow()->toDateString();
+        if (in_array($lower, ['دیروز', 'yesterday'], true)) return Carbon::yesterday()->toDateString();
+
+        $norm = str_replace(['-', '.', ' '], '/', preg_replace('/\s+/', '', $lower));
+        if (!preg_match('/^(\d{4})\/(\d{1,2})\/(\d{1,2})$/', $norm, $m)) return null;
+        $y = (int) $m[1]; $mo = (int) $m[2]; $d = (int) $m[3];
+
+        // سال ۱۳۰۰-۱۵۰۰ = شمسی، بقیه = میلادی
+        if ($y >= 1300 && $y <= 1500) {
+            try {
+                return Jalalian::fromFormat('Y/m/d', sprintf('%04d/%02d/%02d', $y, $mo, $d))->toCarbon()->toDateString();
+            } catch (\Throwable $e) { return null; }
+        }
+        try {
+            $c = Carbon::createFromDate($y, $mo, $d);
+            if (!$c || $c->format('Y-m-d') !== sprintf('%04d-%02d-%02d', $y, $mo, $d)) return null;
+            return $c->toDateString();
+        } catch (\Throwable $e) { return null; }
+    }
+
+    /**
+     * پارس پایان روتین: یا تاریخ (مثل شروع) یا مدت مثل «30» / «30 روز».
+     * مدت N روزه یعنی ends_on = starts_on + (N-1) روز (شامل روز شروع).
+     */
+    private function parseRoutineEnd(string $input, string $startsOn): ?string
+    {
+        $raw = trim($input);
+        $fa = str_replace(['۰','۱','۲','۳','۴','۵','۶','۷','۸','۹','٠','١','٢','٣','٤','٥','٦','٧','٨','٩'],
+            ['0','1','2','3','4','5','6','7','8','9'], $raw);
+        if (preg_match('/^(\d{1,3})\s*(روز|days?)?$/ui', trim($fa), $m)) {
+            $n = (int) $m[1];
+            if ($n < 1 || $n > 365) return null;
+            // اگر کاربر کلمه‌ی «روز» نگفته و ورودی شبیه تاریخ است، تاریخ را ترجیح بده
+            if (empty($m[2]) && str_contains($fa, '/')) {
+                return $this->parseRoutineDate($input);
+            }
+            if (empty($m[2]) && $n > 365) return null;
+            return Carbon::parse($startsOn)->addDays($n - 1)->toDateString();
+        }
+        return $this->parseRoutineDate($input);
+    }
+
+    /** متن یادآور ۱۲ شب — اگر دیروز ثبت نشده، بهش اشاره می‌کند. */
+    public static function midnightReminderText(string $chatId, string $platform): string
+    {
+        $yesterday = Carbon::yesterday()->toDateString();
+        $hasYesterday = DailyEntry::where('chat_id', $chatId)
+            ->where('platform', $platform)
+            ->whereDate('entry_date', $yesterday)
+            ->exists();
+
+        $text = "⏰ ساعت ۱۲ شب شد!\nبیا گزارش امروز رو پر کن 📝\nبرای شروع /log را بزن.";
+        if (!$hasYesterday) {
+            $yesterdayShamsi = \App\Helpers\ShamsiDateHelper::dateWithDay(Carbon::yesterday());
+            $text .= "\n\n⚠️ دیروز ({$yesterdayShamsi}) رو ثبت نکردی — با /log می‌تونی اول انتخاب کنی دیروز یا امروز.";
+        }
+        return $text;
+    }
+
+    private function touchSubscriber(string $chatId, string $platform, ?string $username = null): void
+    {
+        try {
+            BotSubscriber::updateOrCreate(
+                ['chat_id' => $chatId, 'platform' => $platform],
+                ['username' => $username, 'last_seen_at' => now()]
+            );
+        } catch (\Throwable $e) {
+            Log::warning("[{$platform}] touchSubscriber failed: " . $e->getMessage());
+        }
     }
 
     // ── Helpers ──

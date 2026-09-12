@@ -169,3 +169,20 @@ tail -f /var/log/apache2/daily.factorland.ir_error.log
 # tm: FTP public_html/proxy.log , public_html/daily-webhook-relay.log
 # tg: /var/www/html/tg.factorland.ir/proxy.log , daily-webhook-relay.log
 ```
+
+### کرون یادآور ۱۲ شب (اجباری برای `bot:remind-midnight`)
+
+اسکجول لاراول (`routes/console.php` → `dailyAt('00:00')->timezone('Asia/Tehran')`) فقط وقتی کار می‌کند که `schedule:run` هر دقیقه اجرا شود:
+
+```bash
+crontab -e -u www-data
+# اضافه کن:
+* * * * * cd /var/www/html/my-daily && php artisan schedule:run >> /dev/null 2>&1
+```
+
+تست دستی:
+
+```bash
+php artisan bot:remind-midnight --dry-run   # فقط لیست گیرندگان
+php artisan schedule:list                   # باید bot:remind-midnight را نشان بدهد
+```
