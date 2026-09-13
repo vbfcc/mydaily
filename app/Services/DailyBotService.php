@@ -60,16 +60,33 @@ class DailyBotService
             return;
         }
 
+        // Direct day buttons — allow interrupting flow as well
+        $isDirectDayBtn = str_starts_with($text, '📝 دیروز') || str_starts_with($text, '📝 امروز') || $text === 'دیروز' || $text === 'امروز';
+
         // If in a flow, handle step input before checking other commands
         if ($state && $state->state !== null) {
-            // Allow /start /today /week /export /routine to interrupt flow
-            if (in_array($text, ['/start', '/today', '/week', '/log', '/export', '/help', '/routine', '/routines', '🔁 روتین‌ها', '/profile', '👤 حساب کاربری'])) {
+            // Allow /start /today /week /export /routine + direct day buttons to interrupt flow
+            if (in_array($text, ['/start', '/today', '/week', '/log', '/export', '/help', '/routine', '/routines', '🔁 روتین‌ها', '/profile', '👤 حساب کاربری']) || $isDirectDayBtn) {
                 $this->clearState($chatId, $platform);
                 // fall through to command handling below
             } else {
                 $this->handleStep($chatId, $platform, $text, $state);
                 return;
             }
+        }
+
+        // Direct day buttons from main menu (outside flow) — start immediately for that date
+        if (str_starts_with($text, '📝 دیروز') || $text === 'دیروز') {
+            $this->startLoggingForDate($chatId, $platform, Carbon::yesterday()->toDateString());
+            return;
+        }
+        if (str_starts_with($text, '📝 امروز') && $text !== '📝 ثبت امروز') {
+            $this->startLoggingForDate($chatId, $platform, Carbon::today()->toDateString());
+            return;
+        }
+        if ($text === 'امروز') {
+            $this->startLoggingForDate($chatId, $platform, Carbon::today()->toDateString());
+            return;
         }
 
         // Routine commands
@@ -110,11 +127,11 @@ class DailyBotService
         }
 
         match (true) {
-            $text === '/start' => $this->handleStart($chatId),
+            $text === '/start' => $this->handleStart($chatId, $platform),
             $text === '/log' => $this->startLogging($chatId, $platform),
             $text === '/today' => $this->handleToday($chatId, $platform),
             $text === '/week' => $this->handleWeek($chatId, $platform),
-            $text === '/help' => $this->handleStart($chatId),
+            $text === '/help' => $this->handleStart($chatId, $platform),
             $text === '/routine' => $this->handleRoutines($chatId, $platform),
             $text === '/routines' => $this->handleRoutines($chatId, $platform),
             $text === '/profile' => $this->handleProfile($chatId, $platform),
@@ -181,7 +198,7 @@ class DailyBotService
 
     // ── Commands ──
 
-    private function handleStart(string $chatId): void
+    private function handleStart(string $chatId, ?string $platform = null): void
     {
         $text = "سلام! 👋\n"
             . "من ربات ثبت فعالیت‌های روزانه‌ات هستم.\n\n"
@@ -197,11 +214,36 @@ class DailyBotService
             . "/cancel — لغو ثبت جاری\n\n"
             . "برای شروع /log را بزن.";
 
-        $keyboard = [
-            ['📝 ثبت امروز', '📊 امروز'],
-            ['📅 هفته', '📄 JSON'],
-            ['🔁 روتین‌ها', '👤 حساب کاربری'],
-        ];
+        // اگر دیروز ثبت نشده، دکمه‌ی «دیروز» را هم در منوی اصلی نشان بده
+        $showYesterdayBtn = false;
+        $yesterdayShamsi = null;
+        try {
+            $yesterday = Carbon::yesterday()->toDateString();
+            $q = DailyEntry::where('chat_id', $chatId)->whereDate('entry_date', $yesterday);
+            if ($platform !== null) $q->where('platform', $platform);
+            $hasYesterday = $q->exists();
+            if (!$hasYesterday) {
+                $showYesterdayBtn = true;
+                $yesterdayShamsi = \App\Helpers\ShamsiDateHelper::dateWithDay(Carbon::yesterday());
+            }
+        } catch (\Throwable $e) {
+            $showYesterdayBtn = false;
+        }
+
+        if ($showYesterdayBtn) {
+            $keyboard = [
+                ['📝 ثبت امروز', "📝 دیروز — {$yesterdayShamsi}"],
+                ['📊 امروز', '📅 هفته'],
+                ['📄 JSON', '🔁 روتین‌ها'],
+                ['👤 حساب کاربری'],
+            ];
+        } else {
+            $keyboard = [
+                ['📝 ثبت امروز', '📊 امروز'],
+                ['📅 هفته', '📄 JSON'],
+                ['🔁 روتین‌ها', '👤 حساب کاربری'],
+            ];
+        }
         $this->api->sendMessageWithKeyboard($chatId, $text, $keyboard);
     }
 
@@ -558,7 +600,8 @@ class DailyBotService
                 }
                 $data['sleep_time'] = $parsed;
                 $this->setState($chatId, $platform, 'waiting_wake', $data);
-                $this->api->sendMessage($chatId, "۲/۸ — ساعت بیداریت؟\nمثال: 07:00 یا 6 صبح");
+                $dw = $this->dayWord($data);
+                $this->api->sendMessage($chatId, "۲/۸ — ساعت بیداریت ({$dw})؟\nمثال: 07:00 یا 6 صبح");
                 break;
 
             case 'waiting_wake':
@@ -569,7 +612,8 @@ class DailyBotService
                 }
                 $data['wake_time'] = $parsed;
                 $this->setState($chatId, $platform, 'waiting_work', $data);
-                $this->api->sendMessage($chatId, "۳/۸ — چند ساعت کار مفید کردی؟\nعدد بفرست مثلا: 6 یا 4.5 (بین 0 تا 16)");
+                $dw = $this->dayWord($data);
+                $this->api->sendMessage($chatId, "۳/۸ — {$dw} چند ساعت کار مفید کردی؟\nعدد بفرست مثلا: 6 یا 4.5 (بین 0 تا 16)");
                 break;
 
             case 'waiting_work':
@@ -579,7 +623,8 @@ class DailyBotService
                 }
                 $data['work_hours'] = round((float)$input, 1);
                 $this->setState($chatId, $platform, 'waiting_gym', $data);
-                $this->api->sendMessageWithKeyboard($chatId, "۴/۸ — امروز باشگاه رفتی؟", [['بله', 'خیر']]);
+                $dw = $this->dayWord($data);
+                $this->api->sendMessageWithKeyboard($chatId, "۴/۸ — {$dw} باشگاه رفتی؟", [['بله', 'خیر']]);
                 break;
 
             case 'waiting_gym':
@@ -590,7 +635,8 @@ class DailyBotService
                 }
                 $data['gym'] = $val;
                 $this->setState($chatId, $platform, 'waiting_gaming', $data);
-                $this->api->sendMessage($chatId, "۵/۸ — چند دقیقه گیم زدی؟\nعدد بفرست مثلا: 45 یا 0");
+                $dw = $this->dayWord($data);
+                $this->api->sendMessage($chatId, "۵/۸ — {$dw} چند دقیقه گیم زدی؟\nعدد بفرست مثلا: 45 یا 0");
                 break;
 
             case 'waiting_gaming':
@@ -600,7 +646,8 @@ class DailyBotService
                 }
                 $data['gaming_minutes'] = (int)$input;
                 $this->setState($chatId, $platform, 'waiting_social', $data);
-                $this->api->sendMessageWithKeyboard($chatId, "۶/۸ — امروز تعامل اجتماعی داشتی؟", [['بله', 'خیر']]);
+                $dw = $this->dayWord($data);
+                $this->api->sendMessageWithKeyboard($chatId, "۶/۸ — {$dw} تعامل اجتماعی داشتی؟", [['بله', 'خیر']]);
                 break;
 
             case 'waiting_social':
@@ -611,7 +658,8 @@ class DailyBotService
                 }
                 $data['social'] = $val;
                 $this->setState($chatId, $platform, 'waiting_mood', $data);
-                $this->api->sendMessage($chatId, "۷/۸ — حالت امروز از ۱۰ چند بود؟\nعدد 1 تا 10 بفرست:");
+                $dw = $this->dayWord($data);
+                $this->api->sendMessage($chatId, "۷/۸ — حالت {$dw} از ۱۰ چند بود؟\nعدد 1 تا 10 بفرست:");
                 break;
 
             case 'waiting_mood':
@@ -621,7 +669,8 @@ class DailyBotService
                 }
                 $data['mood'] = (int)$input;
                 $this->setState($chatId, $platform, 'waiting_trigger', $data);
-                $this->api->sendMessage($chatId, "۸/۸ — مهم‌ترین چیزی که حالت را تغییر داد چی بود؟\nیک جمله بنویس. اگر چیزی نبود /skip بفرست.");
+                $dw = $this->dayWord($data);
+                $this->api->sendMessage($chatId, "۸/۸ — مهم‌ترین چیزی که {$dw} حالت را تغییر داد چی بود؟\nیک جمله بنویس. اگر چیزی نبود /skip بفرست.");
                 break;
 
             case 'waiting_trigger':
@@ -927,9 +976,10 @@ class DailyBotService
         $total = count($ids);
         $routine = Routine::find($ids[$idx] ?? 0);
         $title = $routine?->title ?? 'روتین';
+        $dw = $this->dayWord($data);
 
         $this->api->sendMessageWithInlineKeyboard($chatId,
-            "🔁 روتین «{$title}» (" . ($idx + 1) . " از {$total})\nامروز انجامش دادی؟",
+            "🔁 روتین «{$title}» (" . ($idx + 1) . " از {$total})\n{$dw} انجامش دادی؟",
             [[
                 ['text' => '✅ بله', 'callback_data' => 'rt:yes'],
                 ['text' => '❌ خیر', 'callback_data' => 'rt:no'],
@@ -1186,5 +1236,25 @@ class DailyBotService
         if (in_array($t, ['بله', 'yes', 'y', '1', 'true', 'آره'], true)) return true;
         if (in_array($t, ['خیر', 'نه', 'no', 'n', '0', 'false'], true)) return false;
         return null;
+    }
+
+    /** کلمه‌ی روز برای پیام‌های فلو: «امروز» / «دیروز» / تاریخ کوتاه شمسی برای روزهای دیگر. */
+    private function dayWord(array $data): string
+    {
+        $target = $data['entry_date'] ?? Carbon::today()->toDateString();
+        try { $target = Carbon::parse($target)->toDateString(); } catch (\Throwable $e) { $target = Carbon::today()->toDateString(); }
+        if ($target === Carbon::today()->toDateString()) return 'امروز';
+        if ($target === Carbon::yesterday()->toDateString()) return 'دیروز';
+        return \App\Helpers\ShamsiDateHelper::shortDate(Carbon::parse($target)) ?: $target;
+    }
+
+    /** شروع مستقیم ثبت برای یک تاریخ بدون نمایش انتخاب‌گر (برای دکمه‌ی «📝 دیروز» در منوی اصلی). */
+    private function startLoggingForDate(string $chatId, string $platform, string $dateYmd): void
+    {
+        try { $dateYmd = Carbon::parse($dateYmd)->toDateString(); } catch (\Throwable $e) { $dateYmd = Carbon::today()->toDateString(); }
+        $this->setState($chatId, $platform, 'waiting_sleep', ['entry_date' => $dateYmd]);
+        $shamsi = \App\Helpers\ShamsiDateHelper::dateWithDay(Carbon::parse($dateYmd));
+        $label = $dateYmd === Carbon::today()->toDateString() ? 'ثبت امروز' : ($dateYmd === Carbon::yesterday()->toDateString() ? 'ثبت دیروز' : "ثبت {$shamsi}");
+        $this->api->sendMessage($chatId, "شروع می‌کنیم! 📝\n📅 {$shamsi} — {$label}\n\n۱/۸ — ساعت خوابت کی بود؟\nمثال: 23:30 یا 6 صبح یا 7 عصر\n(برای لغو /cancel)");
     }
 }
