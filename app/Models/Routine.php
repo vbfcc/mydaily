@@ -14,12 +14,14 @@ class Routine extends Model
         'starts_on',
         'ends_on',
         'remind_at',
+        'silent_remind',
         'is_active',
     ];
 
     protected $casts = [
         'starts_on' => 'date',
         'ends_on' => 'date',
+        'silent_remind' => 'boolean',
         'is_active' => 'boolean',
     ];
 

@@ -47,7 +47,8 @@ class SendRoutineReminders extends Command
 
         if ($this->option('dry-run')) {
             foreach ($due as $r) {
-                $this->line(" - {$r->platform} / {$r->chat_id} — «{$r->title}» ⏰ {$hm}");
+                $mode = $r->silent_remind ? '🔕 سایلنت' : '🔔 با صدا';
+                $this->line(" - {$r->platform} / {$r->chat_id} — «{$r->title}» ⏰ {$hm} {$mode}");
             }
             return 0;
         }
@@ -59,7 +60,8 @@ class SendRoutineReminders extends Command
                 $text = "⏰ یادآوری: «{$r->title}»\n"
                     . "وقتشه انجامش بدی! (ساعت {$hm} به وقت تهران)\n"
                     . "برای ثبت از /log استفاده کن.";
-                $res = $api->sendMessage($r->chat_id, $text);
+                // سایلنت = disable_notification (تلگرام) — بله این فلگ را نادیده می‌گیرد
+                $res = $api->sendMessage($r->chat_id, $text, (bool) $r->silent_remind);
                 if (($res['ok'] ?? false) === true) {
                     $sent++;
                 } else {

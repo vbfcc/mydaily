@@ -140,18 +140,18 @@ chat_id=111/platform=bale      ──► ردیف جدا (حتی اگر chat_id 
 
 ## روتین‌ها (Routines)
 
-- ساخت: `/routine_new` → اسم (مثلا `روتین پوستی`) → شروع (`امروز`/`فردا`/`1405/07/01` شمسی/`2026-09-23` میلادی) → پایان (تاریخ یا مدت مثل `30` / `30 روز`؛ مدت N روزه = شروع + N-1 روز) → «یادآوری ساعتی می‌خوای؟» (بله/خیر) → اگر بله: ساعت به وقت تهران (`13:30` / `1:30 ظهر` / `1 و نیم ظهر` — پارسر `نیم` را هم می‌فهمد).
-- لیست/توقف: `/routine` — دکمه‌ی اینلاین `➕ روتین جدید` (`rt:new`) و `⏹ توقف` برای هر فعال (`rt:stop:ID`)؛ یا `/routine_stop ID`. روتین دارای یادآوری با `⏰ HH:MM` نمایش داده می‌شود.
+- ساخت: `/routine_new` → اسم (مثلا `روتین پوستی`) → شروع (`امروز`/`فردا`/`1405/07/01` شمسی/`2026-09-23` میلادی) → پایان (تاریخ یا مدت مثل `30` / `30 روز`؛ مدت N روزه = شروع + N-1 روز) → «یادآوری ساعتی می‌خوای؟» (بله/خیر) → اگر بله: ساعت به وقت تهران (`13:30` / `1:30 ظهر` / `1 و نیم ظهر` — پارسر `نیم` را هم می‌فهمد) → «سایلنت یا با صدا؟» (`🔕 سایلنت` / `🔔 با صدا` → ستون `silent_remind`).
+- لیست/توقف: `/routine` — دکمه‌ی اینلاین `➕ روتین جدید` (`rt:new`) و `⏹ توقف` برای هر فعال (`rt:stop:ID`)؛ یا `/routine_stop ID`. روتین دارای یادآوری با `⏰ HH:MM` (و `🔕` اگر سایلنت) نمایش داده می‌شود.
 - فعال بودن = `is_active` و `starts_on <= تاریخ <= ends_on` (`activeRoutinesFor()`).
 - تا وقتی روتینی فعال است، بعد از سوال ۸/۸ به‌ازای هر روتین دو سوال می‌آید: اول «انجامش دادی؟» با دکمه‌ی اینلاین ✅/❌ (`rt:yes`/`rt:no` — تایپ `بله`/`خیر` هم قبول است)، بعد «توضیح؟» (متن آزاد تا ۵۰۰ کاراکتر یا `/skip` / دکمه‌ی `⏭ رد کردن`).
-- استیت‌ها: `waiting_routine_title → waiting_routine_start → waiting_routine_end → waiting_routine_ask_remind → waiting_routine_remind_at` (ویزارد) و `waiting_routine_done → waiting_routine_note` (داخل `/log`، به‌تعداد روتین‌ها تکرار).
+- استیت‌ها: `waiting_routine_title → waiting_routine_start → waiting_routine_end → waiting_routine_ask_remind → waiting_routine_remind_at → waiting_routine_silent` (ویزارد) و `waiting_routine_done → waiting_routine_note` (داخل `/log`، به‌تعداد روتین‌ها تکرار).
 - لاگ هر روز در `routine_logs` (`UNIQUE(routine_id, entry_date)` — ثبت دوباره overwrite). توقف، لاگ‌های قبلی را نگه می‌دارد.
 - نمایش: `/today` و پیام `✅ ثبت شد!` بخش `🔁 روتین‌ها` دارند؛ `/week` زیر هر روز؛ خروجی JSON هر رکورد فیلد `routines: [{title, done, done_bool, note}]` دارد.
 
 ## یادآورها
 
 - `php artisan bot:remind-midnight` (`--dry-run` برای تست) — به همه‌ی `bot_subscribers` (هر چتی که تا حالا پیام داده، با `touchSubscriber` ثبت می‌شود) پیام می‌دهد: «⏰ ساعت ۱۲ شب شد! بیا گزارش امروز رو پر کن 📝» + اگر دیروز ثبت نشده، تذکر جاماندن دیروز.
-- `php artisan bot:remind-routine` (`--dry-run` برای تست) — هر دقیقه اجرا می‌شود؛ روتین‌های فعالی که `remind_at` آن‌ها با ساعت فعلی **تهران** (`Carbon::now('Asia/Tehran')->format('H:i')`) برابر است و امروز `done=true` نشده‌اند، یک پیام یادآوری می‌گیرند (فقط یک‌بار در همان دقیقه، بدون دکمه — ثبت با `/log`).
+- `php artisan bot:remind-routine` (`--dry-run` برای تست) — هر دقیقه اجرا می‌شود؛ روتین‌های فعالی که `remind_at` آن‌ها با ساعت فعلی **تهران** (`Carbon::now('Asia/Tehran')->format('H:i')`) برابر است و امروز `done=true` نشده‌اند، یک پیام یادآوری می‌گیرند (فقط یک‌بار در همان دقیقه، بدون دکمه — ثبت با `/log`). اگر `silent_remind=true` باشد پیام با `disable_notification` (سایلنت، بدون صدا) ارسال می‌شود — روی تلگرام کار می‌کند، بله این فلگ را نادیده می‌گیرد.
 - اسکجول در `routes/console.php`: `bot:remind-midnight → dailyAt('00:00')->timezone('Asia/Tehran')` و `bot:remind-routine → everyMinute()`. روی سرور باید کرون `schedule:run` فعال باشد (بخش دیپلوی).
 
 ## وب‌هوک‌ها
