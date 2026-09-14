@@ -202,10 +202,11 @@ class DailyBotService
 
     // ── Commands ──
 
-    private function handleStart(string $chatId, ?string $platform = null): void
+    /** متن معرفی ربات — هم در /start هم در بازگشت به منوی اصلی استفاده می‌شود. */
+    private function welcomeText(): string
     {
-        $text = "سلام! 👋\n"
-            . "من ربات ثبت فعالیت‌های روزانه‌ات هستم.\n\n"
+        return "سلام! 👋\n"
+            . "من ربات مای‌دیلی هستم — دستیار ثبت فعالیت‌های روزانه‌ات.\n\n"
             . "هفت مورد را هر روز ثبت می‌کنیم:\n"
             . "😴 خواب/بیداری — 💼 کار مفید — 🏋️ باشگاه — 🎮 گیم — 👥 تعامل اجتماعی — 😊 حال (۱-۱۰) — 💭 محرک احساسی\n\n"
             . "دستورات:\n"
@@ -217,8 +218,11 @@ class DailyBotService
             . "/export — خروجی JSON (با انتخاب بازه؛ فقط JSON)\n"
             . "/cancel — لغو ثبت جاری\n\n"
             . "برای شروع /log را بزن.";
+    }
 
-        $this->api->sendMessageWithKeyboard($chatId, $text, $this->mainMenuKeyboard($chatId, $platform));
+    private function handleStart(string $chatId, ?string $platform = null): void
+    {
+        $this->api->sendMessageWithKeyboard($chatId, $this->welcomeText(), $this->mainMenuKeyboard($chatId, $platform));
     }
 
     /** کیبورد منوی اصلی — اگر دیروز ثبت نشده، دکمه‌ی «دیروز» را هم نشان می‌دهد. */
@@ -515,10 +519,10 @@ class DailyBotService
         ]);
     }
 
-    /** بازگشت به منوی اصلی از دکمه‌ی اینلاین پروفایل — کیبورد اصلی را برمی‌گرداند. */
+    /** بازگشت به منوی اصلی از دکمه‌ی اینلاین پروفایل — متن معرفی + کیبورد اصلی. */
     private function sendMainMenu(string $chatId, string $platform): void
     {
-        $this->api->sendMessageWithKeyboard($chatId, "🏠 منوی اصلی 👇", $this->mainMenuKeyboard($chatId, $platform));
+        $this->api->sendMessageWithKeyboard($chatId, $this->welcomeText(), $this->mainMenuKeyboard($chatId, $platform));
     }
 
     /** کارت معرفیِ فورواردی: آیدی ربات + توضیح مینیمال — کاربر برای دوستانش فوروارد می‌کند. */
