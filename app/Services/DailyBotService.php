@@ -43,6 +43,22 @@ class DailyBotService
         $this->api = $api;
     }
 
+    // ── CBT ──
+    private function cbt(): CbtService
+    {
+        return new CbtService($this->api);
+    }
+
+    private function isCbtText(string $text): bool
+    {
+        return $text === '🧠 دفترچه فکر و احساس'
+            || $text === '🧠 دفترچه فکر'
+            || str_starts_with($text, '🧠 دفترچه')
+            || $text === '/cbt'
+            || $text === '/thought'
+            || $text === '/fekr';
+    }
+
     // ── Public entry point for every incoming message ──
 
     public function handle(string $chatId, string $platform, string $text, ?string $username = null): void
@@ -50,12 +66,36 @@ class DailyBotService
         $text = trim($text);
         $this->touchSubscriber($chatId, $platform, $username);
 
+        $cbt = $this->cbt();
+
+        // CBT wizard has priority (stored in Cache, not BotState)
+        if ($cbt->hasActiveState($chatId, $platform)) {
+            if ($text === '/cancel') {
+                $cbt->clear($chatId, $platform);
+                $this->clearState($chatId, $platform);
+                $this->api->sendMessage($chatId, "❌ ثبت لغو شد. برای شروع دوباره /log را بزن.");
+                return;
+            }
+            // Allow hard commands to interrupt CBT flow
+            $isDirectDayBtn = str_starts_with($text, '📝 دیروز') || str_starts_with($text, '📝 امروز') || $text === 'دیروز' || $text === 'امروز';
+            if (in_array($text, ['/start', '/today', '/week', '/log', '/export', '/help', '/routine', '/routines', '🔁 روتین‌ها', '/profile', '👤 حساب کاربری', '👤 پروفایل', '🧠 دفترچه فکر و احساس', '/cbt', '/thought', '/fekr']) || $isDirectDayBtn || $this->isCbtText($text)) {
+                $cbt->clear($chatId, $platform);
+                // fall through to normal handling (also clear BotState if needed below)
+                $this->clearState($chatId, $platform);
+            } else {
+                $cbt->handleStep($chatId, $platform, $text);
+                return;
+            }
+        }
+
         // If user is mid-flow, delegate to state handler (except hard commands)
         $state = $this->getState($chatId, $platform);
 
         // Commands that always work even mid-flow
         if ($text === '/cancel') {
             $this->clearState($chatId, $platform);
+            // also clear CBT if somehow still active
+            $cbt->clear($chatId, $platform);
             $this->api->sendMessage($chatId, "❌ ثبت لغو شد. برای شروع دوباره /log را بزن.");
             return;
         }
@@ -63,10 +103,17 @@ class DailyBotService
         // Direct day buttons — allow interrupting flow as well
         $isDirectDayBtn = str_starts_with($text, '📝 دیروز') || str_starts_with($text, '📝 امروز') || $text === 'دیروز' || $text === 'امروز';
 
+        // CBT menu entry (works even mid-flow — interrupts daily flow)
+        if ($this->isCbtText($text)) {
+            if ($state && $state->state !== null) $this->clearState($chatId, $platform);
+            $cbt->menu($chatId, $platform);
+            return;
+        }
+
         // If in a flow, handle step input before checking other commands
         if ($state && $state->state !== null) {
-            // Allow /start /today /week /export /routine + direct day buttons to interrupt flow
-            if (in_array($text, ['/start', '/today', '/week', '/log', '/export', '/help', '/routine', '/routines', '🔁 روتین‌ها', '/profile', '👤 حساب کاربری']) || $isDirectDayBtn) {
+            // Allow /start /today /week /export /routine + direct day buttons + CBT to interrupt flow
+            if (in_array($text, ['/start', '/today', '/week', '/log', '/export', '/help', '/routine', '/routines', '🔁 روتین‌ها', '/profile', '👤 حساب کاربری', '🧠 دفترچه فکر و احساس', '/cbt']) || $isDirectDayBtn || $this->isCbtText($text)) {
                 $this->clearState($chatId, $platform);
                 // fall through to command handling below
             } else {
@@ -103,6 +150,11 @@ class DailyBotService
             $this->handleRoutineStop($chatId, $platform, $parts[1] ?? null);
             return;
         }
+        if ($this->isCbtText($text)) {
+            $cbt->menu($chatId, $platform);
+            return;
+        }
+
         if ($text === '/profile' || $text === '👤 حساب کاربری' || $text === '👤 پروفایل') {
             $this->handleProfile($chatId, $platform);
             return;
@@ -126,6 +178,11 @@ class DailyBotService
             return;
         }
 
+        if ($this->isCbtText($text)) {
+            $cbt->menu($chatId, $platform);
+            return;
+        }
+
         match (true) {
             $text === '/start' => $this->handleStart($chatId, $platform),
             $text === '/log' => $this->startLogging($chatId, $platform),
@@ -144,6 +201,8 @@ class DailyBotService
             $text === '📄 JSON' => $this->showExportMenu($chatId, $platform),
             $text === '📊 اکسل' => $this->showExportMenu($chatId, $platform),
             $text === '📥 اکسل' => $this->showExportMenu($chatId, $platform),
+            $text === '🧠 دفترچه فکر و احساس' => $cbt->menu($chatId, $platform),
+            $text === '/cbt' => $cbt->menu($chatId, $platform),
             default => $this->handleUnknown($chatId),
         };
     }
@@ -153,6 +212,12 @@ class DailyBotService
     {
         $this->api->answerCallbackQuery($callbackQueryId);
         $this->touchSubscriber($chatId, $platform);
+
+        // CBT — thought_record_* callbacks
+        if (str_starts_with($data, 'thought_record_')) {
+            $this->handleCbtCallback($chatId, $platform, $data);
+            return;
+        }
 
         // Export inline menu — JSON only
         if (str_starts_with($data, 'exp:')) {
@@ -198,6 +263,12 @@ class DailyBotService
         if ($state && $state->state) {
             $this->handleStep($chatId, $platform, $data, $state);
         }
+
+        // CBT fallback: if CBT wizard is active, let its step handler try (e.g. typed distortions via callback path)
+        $cbt = $this->cbt();
+        if ($cbt->hasActiveState($chatId, $platform)) {
+            $cbt->handleStep($chatId, $platform, $data);
+        }
     }
 
     // ── Commands ──
@@ -214,10 +285,35 @@ class DailyBotService
             . "/today — نمایش ثبت امروز\n"
             . "/week — نمایش ۷ روز گذشته\n"
             . "/routine — مدیریت روتین‌ها (مثل روتین پوستی با تاریخ شروع/پایان)\n"
+            . "/cbt — دفترچه فکر و احساس (CBT) — روانشناس گفته هر بار حس منفی داشتی، این جدول رو پر کن\n"
             . "/profile — حساب کاربری (نام، شناسه، تاریخ عضویت)\n"
             . "/export — خروجی JSON (با انتخاب بازه؛ فقط JSON)\n"
             . "/cancel — لغو ثبت جاری\n\n"
             . "برای شروع /log را بزن.";
+    }
+
+    private function handleCbtCallback(string $chatId, string $platform, string $data): void
+    {
+        $cbt = $this->cbt();
+
+        // distortion toggle: thought_record_dist_0 .. 9
+        if (preg_match('/^thought_record_dist_(\d+)$/', $data, $m)) {
+            $cbt->addDistortion($chatId, $platform, (int) $m[1]);
+            return;
+        }
+
+        match ($data) {
+            'thought_record_menu' => $cbt->menu($chatId, $platform),
+            'thought_record_home' => $this->handleStart($chatId, $platform),
+            'thought_record_new' => $cbt->startNew($chatId, $platform),
+            'thought_record_skip_event' => $cbt->skipEvent($chatId, $platform),
+            'thought_record_cancel' => $cbt->cancel($chatId, $platform),
+            'thought_record_dist_done' => $cbt->doneDistortion($chatId, $platform),
+            'thought_record_view' => $cbt->view($chatId, $platform),
+            'thought_record_reset' => $cbt->resetPrompt($chatId, $platform),
+            'thought_record_reset_confirm' => $cbt->resetConfirmed($chatId, $platform),
+            default => $cbt->menu($chatId, $platform),
+        };
     }
 
     private function handleStart(string $chatId, ?string $platform = null): void
@@ -247,13 +343,14 @@ class DailyBotService
                 ['📝 ثبت امروز', "📝 دیروز — {$yesterdayShamsi}"],
                 ['📊 امروز', '📅 هفته'],
                 ['📄 JSON', '🔁 روتین‌ها'],
-                ['👤 حساب کاربری'],
+                ['🧠 دفترچه فکر و احساس', '👤 حساب کاربری'],
             ];
         }
         return [
             ['📝 ثبت امروز', '📊 امروز'],
             ['📅 هفته', '📄 JSON'],
-            ['🔁 روتین‌ها', '👤 حساب کاربری'],
+            ['🔁 روتین‌ها', '🧠 دفترچه فکر و احساس'],
+            ['👤 حساب کاربری'],
         ];
     }
 
