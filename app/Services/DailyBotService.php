@@ -214,15 +214,19 @@ class DailyBotService
             . "/cancel — لغو ثبت جاری\n\n"
             . "برای شروع /log را بزن.";
 
-        // اگر دیروز ثبت نشده، دکمه‌ی «دیروز» را هم در منوی اصلی نشان بده
+        $this->api->sendMessageWithKeyboard($chatId, $text, $this->mainMenuKeyboard($chatId, $platform));
+    }
+
+    /** کیبورد منوی اصلی — اگر دیروز ثبت نشده، دکمه‌ی «دیروز» را هم نشان می‌دهد. */
+    private function mainMenuKeyboard(string $chatId, ?string $platform = null): array
+    {
         $showYesterdayBtn = false;
         $yesterdayShamsi = null;
         try {
             $yesterday = Carbon::yesterday()->toDateString();
             $q = DailyEntry::where('chat_id', $chatId)->whereDate('entry_date', $yesterday);
             if ($platform !== null) $q->where('platform', $platform);
-            $hasYesterday = $q->exists();
-            if (!$hasYesterday) {
+            if (!$q->exists()) {
                 $showYesterdayBtn = true;
                 $yesterdayShamsi = \App\Helpers\ShamsiDateHelper::dateWithDay(Carbon::yesterday());
             }
@@ -231,20 +235,18 @@ class DailyBotService
         }
 
         if ($showYesterdayBtn) {
-            $keyboard = [
+            return [
                 ['📝 ثبت امروز', "📝 دیروز — {$yesterdayShamsi}"],
                 ['📊 امروز', '📅 هفته'],
                 ['📄 JSON', '🔁 روتین‌ها'],
                 ['👤 حساب کاربری'],
             ];
-        } else {
-            $keyboard = [
-                ['📝 ثبت امروز', '📊 امروز'],
-                ['📅 هفته', '📄 JSON'],
-                ['🔁 روتین‌ها', '👤 حساب کاربری'],
-            ];
         }
-        $this->api->sendMessageWithKeyboard($chatId, $text, $keyboard);
+        return [
+            ['📝 ثبت امروز', '📊 امروز'],
+            ['📅 هفته', '📄 JSON'],
+            ['🔁 روتین‌ها', '👤 حساب کاربری'],
+        ];
     }
 
     // ── Export: inline menu (JSON only) ──
@@ -799,12 +801,7 @@ class DailyBotService
     {
         $entry = $this->persistEntry($chatId, $platform, $data);
 
-        $keyboard = [
-            ['📝 ثبت امروز', '📊 امروز'],
-            ['📅 هفته', '📄 JSON'],
-            ['🔁 روتین‌ها', '👤 حساب کاربری'],
-        ];
-        $this->api->sendMessageWithKeyboard($chatId, $this->formatEntry($entry, "✅ ثبت شد!"), $keyboard);
+        $this->api->sendMessageWithKeyboard($chatId, $this->formatEntry($entry, "✅ ثبت شد!"), $this->mainMenuKeyboard($chatId, $platform));
     }
 
     /** ذخیره‌ی خام بدون پیام — برای فلو روتین که اول لاگ‌ها را ذخیره می‌کند بعد پیام می‌دهد. */
@@ -940,16 +937,10 @@ class DailyBotService
                 $lines[] = "• [{$r->id}] {$r->title} ({$tag})";
             }
         }
-        $lines[] = "\nبرای ساخت روتین جدید /routine_new را بزن یا دکمه‌ی زیر.";
+        $lines[] = "\nبرای ساخت روتین جدید /routine_new را بزن.";
         $lines[] = "توقف: /routine_stop ID";
 
-        $inline = [[['text' => '➕ روتین جدید', 'callback_data' => 'rt:new']]];
-        foreach ($active as $r) {
-            $label = mb_substr("⏹ توقف «{$r->title}»", 0, 40);
-            $inline[] = [['text' => $label, 'callback_data' => "rt:stop:{$r->id}"]];
-        }
-
-        $this->api->sendMessageWithInlineKeyboard($chatId, implode("\n", $lines), $inline);
+        $this->api->sendMessageWithKeyboard($chatId, implode("\n", $lines), $this->mainMenuKeyboard($chatId, $platform));
     }
 
     private function startRoutineWizard(string $chatId, string $platform): void
@@ -1071,12 +1062,7 @@ class DailyBotService
         $this->saveRoutineLogs($chatId, $platform, $data['entry_date'], $answers);
         $this->clearState($chatId, $platform);
 
-        $keyboard = [
-            ['📝 ثبت امروز', '📊 امروز'],
-            ['📅 هفته', '📄 JSON'],
-            ['🔁 روتین‌ها', '👤 حساب کاربری'],
-        ];
-        $this->api->sendMessageWithKeyboard($chatId, $this->formatEntry($entry->refresh(), "✅ ثبت شد!"), $keyboard);
+        $this->api->sendMessageWithKeyboard($chatId, $this->formatEntry($entry->refresh(), "✅ ثبت شد!"), $this->mainMenuKeyboard($chatId, $platform));
     }
 
     private function saveRoutineLogs(string $chatId, string $platform, string $dateYmd, array $answers): void
