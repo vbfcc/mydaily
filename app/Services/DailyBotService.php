@@ -188,6 +188,10 @@ class DailyBotService
             $this->sendShareCard($chatId, $platform);
             return;
         }
+        if ($data === 'pf:menu') {
+            $this->sendMainMenu($chatId, $platform);
+            return;
+        }
 
         // Map callbacks to inputs for gym/social/mood steps
         $state = $this->getState($chatId, $platform);
@@ -507,7 +511,14 @@ class DailyBotService
 
         $this->api->sendMessageWithInlineKeyboard($chatId, $text, [
             [['text' => '📤 معرفی به دوستان', 'callback_data' => 'pf:share']],
+            [['text' => '🏠 منوی اصلی', 'callback_data' => 'pf:menu']],
         ]);
+    }
+
+    /** بازگشت به منوی اصلی از دکمه‌ی اینلاین پروفایل — کیبورد اصلی را برمی‌گرداند. */
+    private function sendMainMenu(string $chatId, string $platform): void
+    {
+        $this->api->sendMessageWithKeyboard($chatId, "🏠 منوی اصلی 👇", $this->mainMenuKeyboard($chatId, $platform));
     }
 
     /** کارت معرفیِ فورواردی: آیدی ربات + توضیح مینیمال — کاربر برای دوستانش فوروارد می‌کند. */
