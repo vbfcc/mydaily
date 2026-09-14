@@ -716,20 +716,34 @@ class DailyBotService
                     $this->api->sendMessage($chatId, "پایان ({$endsOn}) قبل از شروعه ({$startsOn})!\nیه تاریخ بعد از شروع بفرست:");
                     return;
                 }
-                $routine = Routine::create([
-                    'chat_id' => $chatId,
-                    'platform' => $platform,
-                    'title' => $data['routine_title'],
-                    'starts_on' => $startsOn,
-                    'ends_on' => $endsOn,
-                    'is_active' => true,
-                ]);
-                $this->clearState($chatId, $platform);
-                $shamsiStart = \App\Helpers\ShamsiDateHelper::dateOnly(Carbon::parse($startsOn));
-                $shamsiEnd = \App\Helpers\ShamsiDateHelper::dateOnly(Carbon::parse($endsOn));
-                $this->api->sendMessage($chatId, "✅ روتین «{$routine->title}» فعال شد!\n📅 {$shamsiStart} تا {$shamsiEnd}\n\n"
-                    . "تا وقتی فعاله، موقع ثبت روزانه (/log) ازت می‌پرسم انجامش دادی یا نه (با دکمه بله/خیر + توضیح).");
-                $this->handleRoutines($chatId, $platform);
+                $data['routine_ends_on'] = $endsOn;
+                $this->setState($chatId, $platform, 'waiting_routine_ask_remind', $data);
+                $this->api->sendMessageWithKeyboard($chatId,
+                    "⏰ یادآوری ساعتی می‌خوای؟\nمثلا هر روز ساعت ۱۳:۳۰ بهت یادآوری کنم «{$data['routine_title']}» رو انجام بدی (به وقت تهران).",
+                    [['بله', 'خیر']]);
+                break;
+
+            case 'waiting_routine_ask_remind':
+                $val = $this->parseYesNo($input);
+                if ($val === null) {
+                    $this->api->sendMessageWithKeyboard($chatId, "لطفا بله یا خیر بفرست:", [['بله', 'خیر']]);
+                    return;
+                }
+                if (!$val) {
+                    $this->finishRoutineWizard($chatId, $platform, $data, null);
+                    break;
+                }
+                $this->setState($chatId, $platform, 'waiting_routine_remind_at', $data);
+                $this->api->sendMessage($chatId, "⏰ ساعت یادآوری روزانه رو بگو (به وقت تهران):\nمثلا: 13:30 یا 1:30 ظهر یا 9 صبح\n(برای لغو /cancel)");
+                break;
+
+            case 'waiting_routine_remind_at':
+                $parsed = $this->parseFlexibleTime($input);
+                if ($parsed === null) {
+                    $this->api->sendMessage($chatId, "ساعت رو درست متوجه نشدم 😅\nمثلا بفرست: 13:30 یا 1:30 ظهر یا 9 صبح\nدوباره بفرست:");
+                    return;
+                }
+                $this->finishRoutineWizard($chatId, $platform, $data, $parsed);
                 break;
 
             case 'waiting_routine_done':
@@ -896,7 +910,8 @@ class DailyBotService
             foreach ($active as $r) {
                 $s = \App\Helpers\ShamsiDateHelper::dateOnly($r->starts_on);
                 $e = \App\Helpers\ShamsiDateHelper::dateOnly($r->ends_on);
-                $lines[] = "• [{$r->id}] {$r->title} — {$s} تا {$e}";
+                $remind = $r->remind_at ? ' ⏰ ' . mb_substr((string) $r->remind_at, 0, 5) : '';
+                $lines[] = "• [{$r->id}] {$r->title} — {$s} تا {$e}{$remind}";
             }
         }
         if (!$past->isEmpty()) {
@@ -922,6 +937,32 @@ class DailyBotService
     {
         $this->setState($chatId, $platform, 'waiting_routine_title', []);
         $this->api->sendMessage($chatId, "➕ روتین جدید!\n\nاسم روتین چیه؟\nمثلا: روتین پوستی\n(برای لغو /cancel)");
+    }
+
+    /** ساخت نهایی روتین در انتهای ویزارد — $remindAt به وقت تهران (HH:MM) یا null. */
+    private function finishRoutineWizard(string $chatId, string $platform, array $data, ?string $remindAt): void
+    {
+        $startsOn = $data['routine_starts_on'] ?? Carbon::today()->toDateString();
+        $endsOn = $data['routine_ends_on'] ?? $startsOn;
+        $routine = Routine::create([
+            'chat_id' => $chatId,
+            'platform' => $platform,
+            'title' => $data['routine_title'],
+            'starts_on' => $startsOn,
+            'ends_on' => $endsOn,
+            'remind_at' => $remindAt,
+            'is_active' => true,
+        ]);
+        $this->clearState($chatId, $platform);
+        $shamsiStart = \App\Helpers\ShamsiDateHelper::dateOnly(Carbon::parse($startsOn));
+        $shamsiEnd = \App\Helpers\ShamsiDateHelper::dateOnly(Carbon::parse($endsOn));
+        $msg = "✅ روتین «{$routine->title}» فعال شد!\n📅 {$shamsiStart} تا {$shamsiEnd}\n";
+        if ($remindAt !== null) {
+            $msg .= "⏰ یادآوری روزانه ساعت {$remindAt} (به وقت تهران)\n";
+        }
+        $msg .= "\nتا وقتی فعاله، موقع ثبت روزانه (/log) ازت می‌پرسم انجامش دادی یا نه (با دکمه بله/خیر + توضیح).";
+        $this->api->sendMessage($chatId, $msg);
+        $this->handleRoutines($chatId, $platform);
     }
 
     private function handleRoutineStop(string $chatId, string $platform, ?string $id): void
@@ -1154,7 +1195,8 @@ class DailyBotService
 
     /**
      * Flexible time parser — product-minimal.
-     * Accepts: 23:30, 23.30, 6 صبح, 6:30 صبح, ۶ صبح, 7 عصر, 6 شب, 12 ظهر, 6, 06, 18, 6am, 6pm
+     * Accepts: 23:30, 23.30, 6 صبح, 6:30 صبح, ۶ صبح, 7 عصر, 6 شب, 12 ظهر, 6, 06, 18, 6am, 6pm,
+     *          1 و نیم ظهر (=13:30), 9 نیم شب (=21:30)
      * Returns normalized HH:MM or null.
      * DB stays HH:MM — no schema change.
      */
@@ -1195,7 +1237,13 @@ class DailyBotService
             return null;
         }
         $hour = (int)$m[1];
-        $minute = isset($m[2]) && $m[2] !== '' ? (int)$m[2] : 0;
+        $explicitMinute = isset($m[2]) && $m[2] !== '';
+        $minute = $explicitMinute ? (int)$m[2] : 0;
+
+        // «نیم» بدون دقیقه‌ی صریح یعنی ربعِ ساعتِ بعد (:30) — مثلا «1 و نیم ظهر» = 13:30
+        if (!$explicitMinute && mb_strpos($lower, 'نیم') !== false) {
+            $minute = 30;
+        }
 
         if ($minute < 0 || $minute > 59) return null;
 

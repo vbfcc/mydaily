@@ -13,6 +13,7 @@ class Routine extends Model
         'title',
         'starts_on',
         'ends_on',
+        'remind_at',
         'is_active',
     ];
 
