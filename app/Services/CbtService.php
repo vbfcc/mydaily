@@ -3,6 +3,7 @@
 namespace App\Services;
 
 use App\Helpers\ShamsiDateHelper;
+use App\Models\CbtRecord;
 use Illuminate\Support\Facades\Cache;
 use Illuminate\Support\Facades\Log;
 use Illuminate\Support\Facades\Storage;
@@ -11,9 +12,8 @@ use Illuminate\Support\Facades\Storage;
  * CbtService — دفترچه فکر و احساس (Thought Record / CBT).
  *
  * پورت فیچر CBT از پروژه‌ی factorland برای ربات mydayli.
- * تفاوت‌ها با نسخه‌ی اصلی:
+ * بهبود 2026-09-14: ذخیره در DB (cbt_records) به‌جای فایل متنی — استاندارد، قابل کوئری، per-user isolation via chat_id+platform.
  *  - چندکاربره است: state در Cache با کلید جدا per (platform, chatId)
- *    و رکوردها در فایل جدا per کاربر: thought_record/{platform}_{chatId}/records.txt
  *  - خروجی PDF ندارد؛ view() یک فایل JSON می‌سازد و با sendDocument می‌فرستد
  *    (مطابق درخواست: «خروجی‌ها همون json باقی بمونه»).
  *  - به‌جای sendMessageWithGlassButton از BotApi::sendMessageWithInlineKeyboard
@@ -62,6 +62,7 @@ class CbtService
         'best_friend' => 'اگر بهترین دوست من جای من بود و چنین فکری داشت، در مورد فکرش به او چه میگفتم؟',
     ];
 
+    // Legacy file constants kept for one-time migration from file → DB
     protected const RECORD_START = '###RECORD_START###';
 
     protected const RECORD_END = '###RECORD_END###';
@@ -71,7 +72,7 @@ class CbtService
         $this->api = $api;
     }
 
-    // ── Storage path (per user, private) ──
+    // ── Storage path (legacy per-user file, for migration only) ──
 
     public static function storagePath(string $chatId, string $platform): string
     {
@@ -109,6 +110,10 @@ class CbtService
 
     public function resetConfirmed(string $chatId, string $platform): void
     {
+        // DB-backed: delete rows for this user only
+        CbtRecord::where('chat_id', $chatId)->where('platform', $platform)->delete();
+
+        // also remove legacy file if exists (migration cleanup)
         $path = self::storagePath($chatId, $platform);
         if (Storage::disk('local')->exists($path)) {
             Storage::disk('local')->delete($path);
@@ -404,42 +409,63 @@ class CbtService
         $this->api->sendMessageWithInlineKeyboard($chatId, $text, $keyboard);
     }
 
-    // ── Save ──
+    // ── Save (DB) ──
 
     protected function saveRecord(string $chatId, string $platform, array $state): void
     {
-        $date = ShamsiDateHelper::fullDateTime(now());
+        $dateShamsi = ShamsiDateHelper::fullDateTime(now());
         $answers = $state['answers'] ?? [];
+        $distortionsArr = $state['distortions'] ?? [];
+        // if doneDistortion set distortion string, use it; else implode
+        $distortionStr = $state['distortion'] ?? (empty($distortionsArr) ? '-' : implode('، ', $distortionsArr));
 
-        $block = self::RECORD_START."\n";
-        $block .= 'DATE: '.$this->encodeField((string) $date)."\n";
-        $block .= 'EVENT: '.$this->encodeField((string) ($state['event'] ?? '-'))."\n";
-        $block .= 'THOUGHT: '.$this->encodeField((string) ($state['thought'] ?? '-'))."\n";
-        $block .= 'DISTORTION: '.$this->encodeField((string) ($state['distortion'] ?? '-'))."\n";
-        $block .= 'FEELING: '.$this->encodeField((string) ($state['feeling'] ?? '-'))."\n";
-        $block .= 'SCORE_THOUGHT: '.$this->encodeField((string) ($state['score_thought'] ?? '-'))."\n";
-        $block .= 'SCORE_FEELING: '.$this->encodeField((string) ($state['score_feeling'] ?? '-'))."\n";
-        foreach (array_keys(self::QUESTIONS) as $key) {
-            $block .= strtoupper($key).': '.$this->encodeField((string) ($answers[$key] ?? '-'))."\n";
+        // Normalize empty to null for DB (toExportArray maps back to '-')
+        $norm = fn ($v) => ($v === null || $v === '' || $v === '-') ? null : $v;
+
+        try {
+            CbtRecord::create([
+                'chat_id' => $chatId,
+                'platform' => $platform,
+                'date_shamsi' => $dateShamsi,
+                'event' => $norm($state['event'] ?? null),
+                'thought' => $norm($state['thought'] ?? null),
+                'distortion' => $norm($distortionStr),
+                'distortions' => empty($distortionsArr) ? null : array_values($distortionsArr),
+                'feeling' => $norm($state['feeling'] ?? null),
+                'score_thought' => $norm($state['score_thought'] ?? null),
+                'score_feeling' => $norm($state['score_feeling'] ?? null),
+                'evidence_for' => $norm($answers['evidence_for'] ?? null),
+                'evidence_against' => $norm($answers['evidence_against'] ?? null),
+                'alternative_reasons' => $norm($answers['alternative_reasons'] ?? null),
+                'others_agree' => $norm($answers['others_agree'] ?? null),
+                'pros_cons' => $norm($answers['pros_cons'] ?? null),
+                'testable' => $norm($answers['testable'] ?? null),
+                'best_friend' => $norm($answers['best_friend'] ?? null),
+                'score_thought_after' => $norm($state['score_thought_after'] ?? null),
+                'score_feeling_after' => $norm($state['score_feeling_after'] ?? null),
+                'reaction' => $norm($state['reaction'] ?? null),
+            ]);
+        } catch (\Throwable $e) {
+            Log::error("[{$platform}] cbt saveRecord failed: ".$e->getMessage());
+            $this->api->sendMessage($chatId, "❌ خطا در ذخیره‌ی رکورد. دوباره تلاش کن.");
+
+            return;
         }
-        $block .= 'SCORE_THOUGHT_AFTER: '.$this->encodeField((string) ($state['score_thought_after'] ?? '-'))."\n";
-        $block .= 'SCORE_FEELING_AFTER: '.$this->encodeField((string) ($state['score_feeling_after'] ?? '-'))."\n";
-        $block .= 'REACTION: '.$this->encodeField((string) ($state['reaction'] ?? '-'))."\n";
-        $block .= self::RECORD_END."\n\n";
 
-        Storage::disk('local')->append(self::storagePath($chatId, $platform), $block);
-
-        $this->api->sendMessageWithInlineKeyboard($chatId, "✅ رکورد با موفقیت ثبت شد.\nتاریخ: {$date}", [
+        $this->api->sendMessageWithInlineKeyboard($chatId, "✅ رکورد با موفقیت ثبت شد.\nتاریخ: {$dateShamsi}", [
             [['text' => '➕ ثبت رکورد دیگر', 'callback_data' => 'thought_record_new']],
             [['text' => '📄 دریافت جدول کامل (JSON)', 'callback_data' => 'thought_record_view']],
             [['text' => '⬅️ بازگشت به منوی اصلی', 'callback_data' => 'thought_record_home']],
         ]);
     }
 
-    // ── View: JSON export (no PDF) ──
+    // ── View: JSON export (no PDF) — DB-backed ──
 
     public function view(string $chatId, string $platform): void
     {
+        // migrate legacy file if DB empty for this user
+        $this->migrateLegacyFileIfNeeded($chatId, $platform);
+
         $records = $this->readRecords($chatId, $platform);
 
         if (empty($records)) {
@@ -478,6 +504,7 @@ class CbtService
                 Log::warning("[{$platform}] cbt json sendDocument failed", ['result' => $result]);
                 $this->sendAsText($chatId, $records);
             }
+            // عمداً ریست نمی‌شود — کاربر خودش باید 🗑 بزند
         } catch (\Throwable $e) {
             Log::error("[{$platform}] cbt view error: ".$e->getMessage());
             $this->sendAsText($chatId, $records);
@@ -517,51 +544,92 @@ class CbtService
         }
     }
 
-    // ── Read/parse ──
+    // ── Read (DB) ──
 
     /**
-     * @return array<int, array<string, string>>
+     * @return array<int, array<string, mixed>>
      */
     public function readRecords(string $chatId, string $platform): array
     {
-        $path = self::storagePath($chatId, $platform);
-        if (! Storage::disk('local')->exists($path)) {
-            return [];
-        }
+        $rows = CbtRecord::where('chat_id', $chatId)
+            ->where('platform', $platform)
+            ->orderBy('id')
+            ->get();
 
-        $content = Storage::disk('local')->get($path);
-
-        preg_match_all(
-            '/'.preg_quote(self::RECORD_START, '/').'(.*?)'.preg_quote(self::RECORD_END, '/').'/s',
-            $content,
-            $matches
-        );
-
-        $records = [];
-        foreach ($matches[1] as $block) {
-            $record = [
-                'date' => $this->extractField($block, 'DATE'),
-                'event' => $this->extractField($block, 'EVENT'),
-                'thought' => $this->extractField($block, 'THOUGHT'),
-                'distortion' => $this->extractField($block, 'DISTORTION'),
-                'feeling' => $this->extractField($block, 'FEELING'),
-                'score_thought' => $this->extractField($block, 'SCORE_THOUGHT'),
-                'score_feeling' => $this->extractField($block, 'SCORE_FEELING'),
-                'score_thought_after' => $this->extractField($block, 'SCORE_THOUGHT_AFTER'),
-                'score_feeling_after' => $this->extractField($block, 'SCORE_FEELING_AFTER'),
-                'reaction' => $this->extractField($block, 'REACTION'),
-            ];
-
-            foreach (array_keys(self::QUESTIONS) as $key) {
-                $record[$key] = $this->extractField($block, strtoupper($key));
-            }
-
-            $records[] = $record;
-        }
-
-        return $records;
+        return $rows->map(fn (CbtRecord $r) => $r->toExportArray())->toArray();
     }
 
+    /**
+     * One-time migration: if DB empty but legacy file exists, import it.
+     */
+    protected function migrateLegacyFileIfNeeded(string $chatId, string $platform): void
+    {
+        if (CbtRecord::where('chat_id', $chatId)->where('platform', $platform)->exists()) {
+            return;
+        }
+
+        $path = self::storagePath($chatId, $platform);
+        if (! Storage::disk('local')->exists($path)) {
+            return;
+        }
+
+        try {
+            $content = Storage::disk('local')->get($path);
+            preg_match_all(
+                '/'.preg_quote(self::RECORD_START, '/').'(.*?)'.preg_quote(self::RECORD_END, '/').'/s',
+                $content,
+                $matches
+            );
+
+            foreach ($matches[1] as $block) {
+                $extract = function (string $key) use ($block): ?string {
+                    if (preg_match('/^'.$key.': (.*?)$/m', $block, $m)) {
+                        $v = str_replace('\\n', "\n", trim($m[1]));
+                        return ($v === '-' || $v === '') ? null : $v;
+                    }
+
+                    return null;
+                };
+
+                $distortionStr = $extract('DISTORTION');
+                $distortionsArr = null;
+                if ($distortionStr) {
+                    $distortionsArr = array_values(array_filter(array_map('trim', explode('،', $distortionStr))));
+                    if (empty($distortionsArr)) $distortionsArr = null;
+                }
+
+                CbtRecord::create([
+                    'chat_id' => $chatId,
+                    'platform' => $platform,
+                    'date_shamsi' => $extract('DATE'),
+                    'event' => $extract('EVENT'),
+                    'thought' => $extract('THOUGHT'),
+                    'distortion' => $distortionStr,
+                    'distortions' => $distortionsArr,
+                    'feeling' => $extract('FEELING'),
+                    'score_thought' => $extract('SCORE_THOUGHT'),
+                    'score_feeling' => $extract('SCORE_FEELING'),
+                    'evidence_for' => $extract('EVIDENCE_FOR'),
+                    'evidence_against' => $extract('EVIDENCE_AGAINST'),
+                    'alternative_reasons' => $extract('ALTERNATIVE_REASONS'),
+                    'others_agree' => $extract('OTHERS_AGREE'),
+                    'pros_cons' => $extract('PROS_CONS'),
+                    'testable' => $extract('TESTABLE'),
+                    'best_friend' => $extract('BEST_FRIEND'),
+                    'score_thought_after' => $extract('SCORE_THOUGHT_AFTER'),
+                    'score_feeling_after' => $extract('SCORE_FEELING_AFTER'),
+                    'reaction' => $extract('REACTION'),
+                ]);
+            }
+
+            // keep file as backup: rename to .migrated
+            Storage::disk('local')->move($path, $path.'.migrated.'.now()->format('Ymd_His'));
+        } catch (\Throwable $e) {
+            Log::warning("[{$platform}] cbt legacy migrate failed: ".$e->getMessage());
+        }
+    }
+
+    // Legacy helpers kept for migration above
     protected function extractField(string $block, string $key): string
     {
         if (preg_match('/^'.$key.': (.*?)$/m', $block, $m)) {
