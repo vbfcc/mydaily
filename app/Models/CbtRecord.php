@@ -26,6 +26,7 @@ class CbtRecord extends Model
         'pros_cons',
         'testable',
         'best_friend',
+        'closing_answers',
         'reaction',
         'score_thought_after',
         'score_feeling_after',
@@ -33,6 +34,7 @@ class CbtRecord extends Model
 
     protected $casts = [
         'distortions' => 'array',
+        'closing_answers' => 'array',
     ];
 
     /**
@@ -60,6 +62,7 @@ class CbtRecord extends Model
             'pros_cons' => $this->pros_cons ?? '-',
             'testable' => $this->testable ?? '-',
             'best_friend' => $this->best_friend ?? '-',
+            'closing_answers' => $this->closing_answers ?? [],
             'created_at' => $this->created_at?->toIso8601String(),
             'created_at_shamsi' => $this->created_at ? \App\Helpers\ShamsiDateHelper::fullDateTime($this->created_at) : null,
         ];

@@ -302,6 +302,12 @@ class DailyBotService
             return;
         }
 
+        // closing MCQ: thought_record_closing_{index}_{letter|skip}
+        if (preg_match('/^thought_record_closing_(\d+)_([A-D]|skip)$/', $data, $m)) {
+            $cbt->selectClosing($chatId, $platform, (int) $m[1], $m[2] === 'skip' ? null : $m[2]);
+            return;
+        }
+
         match ($data) {
             'thought_record_menu' => $cbt->menu($chatId, $platform),
             'thought_record_home' => $this->handleStart($chatId, $platform),

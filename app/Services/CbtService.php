@@ -99,6 +99,41 @@ class CbtService
         return "thought_record/{$safePlatform}_{$safeChat}/records.txt";
     }
 
+    /**
+     * سه سوال تکمیلی چندگزینه‌ای درباره‌ی «شخص موردنظر» — بعد از ۷ سوال سقراطی.
+     * پاسخ با دکمه‌ی inline انتخاب می‌شود و در ستون closing_answers (JSON) ذخیره می‌گردد.
+     * سوال ۳ مهم‌ترین است: «از دست دادن این آدم» یا «از دست دادن تجربه» را جدا می‌کند.
+     */
+    protected const CLOSING_QUESTIONS = [
+        [
+            'question' => 'الان بیشتر دلم برای چی تنگ شده؟',
+            'options' => [
+                'A' => 'خودِ شخص موردنظر و ویژگی‌های شخصی او',
+                'B' => 'حس داشتن یک رابطه عاطفی عمیق و غیرسطحی',
+                'C' => 'حس اینکه یک نفر من را انتخاب کرده و برایش مهمم',
+                'D' => 'ترکیبی از این‌ها، ولی دقیق نمی‌دانم کدام بیشتر است',
+            ],
+        ],
+        [
+            'question' => 'وقتی می‌بینم شخص موردنظر آنلاین است، بیشترین چیزی که ذهنم می‌خواهد بفهمد چیست؟',
+            'options' => [
+                'A' => 'با چه کسی صحبت می‌کند',
+                'B' => 'آیا شخص جدیدی وارد زندگی‌اش شده',
+                'C' => 'آیا هنوز برای او اهمیتی دارم',
+                'D' => 'نمی‌خواهم چیزی بفهمم؛ فقط اضطراب دارم و مغزم دنبال توضیح می‌گردد',
+            ],
+        ],
+        [
+            'question' => 'اگر مطمئن می‌شدم شخص موردنظر دیگر هیچ‌وقت وارد رابطه با من نمی‌شود، سخت‌ترین بخش این اتفاق برای من چه بود؟',
+            'options' => [
+                'A' => 'از دست دادن خودِ او',
+                'B' => 'از دست دادن امکان داشتن یک رابطه عمیق',
+                'C' => 'احساس اینکه من انتخاب نشدم',
+                'D' => 'تنهایی و نداشتن یک پیوند عاطفی نزدیک',
+            ],
+        ],
+    ];
+
     // ── Menu ──
 
     public function menu(string $chatId, string $platform): void
@@ -250,9 +285,11 @@ class CbtService
                     break;
                 }
 
-                $state['step'] = 'score_thought_after';
+                $state['step'] = 'closing';
+                $state['closing_index'] = 0;
+                $state['closing_answers'] = [];
                 $this->setState($chatId, $platform, $state);
-                $this->askScoreThoughtAfter($chatId);
+                $this->askClosing($chatId, 0);
                 break;
 
             case 'score_thought_after':
@@ -399,9 +436,52 @@ class CbtService
             return;
         }
 
+        $state['step'] = 'closing';
+        $state['closing_index'] = 0;
+        $state['closing_answers'] = [];
+        $this->setState($chatId, $platform, $state);
+        $this->askClosing($chatId, 0);
+    }
+
+    public function selectClosing(string $chatId, string $platform, int $index, ?string $option = null): void
+    {
+        $state = $this->getState($chatId, $platform);
+        if (! $state || ($state['step'] ?? null) !== 'closing') {
+            $this->menu($chatId, $platform);
+
+            return;
+        }
+
+        if ($option !== null) {
+            $state['closing_answers'][$index] = $option;
+        }
+
+        $this->setState($chatId, $platform, $state);
+
+        $next = $index + 1;
+        if ($next < count(self::CLOSING_QUESTIONS)) {
+            $this->askClosing($chatId, $next);
+
+            return;
+        }
+
         $state['step'] = 'score_thought_after';
         $this->setState($chatId, $platform, $state);
         $this->askScoreThoughtAfter($chatId);
+    }
+
+    protected function askClosing(string $chatId, int $index): void
+    {
+        $question = self::CLOSING_QUESTIONS[$index];
+
+        $keyboard = [];
+        foreach ($question['options'] as $letter => $label) {
+            $keyboard[] = [['text' => "{$letter}) {$label}", 'callback_data' => "thought_record_closing_{$index}_{$letter}"]];
+        }
+        $keyboard[] = [['text' => '⏭️ سوال بعدی (بدون پاسخ)', 'callback_data' => "thought_record_closing_{$index}_skip"]];
+        $keyboard[] = [['text' => '⭕ انصراف', 'callback_data' => 'thought_record_cancel']];
+
+        $this->api->sendMessageWithInlineKeyboard($chatId, "➕ سوال تکمیلی ".($index + 1)." از ".count(self::CLOSING_QUESTIONS).":\n{$question['question']}", $keyboard);
     }
 
     protected function askScoreThoughtAfter(string $chatId): void
@@ -526,6 +606,7 @@ class CbtService
                 'pros_cons' => $norm($answers['pros_cons'] ?? null),
                 'testable' => $norm($answers['testable'] ?? null),
                 'best_friend' => $norm($answers['best_friend'] ?? null),
+                'closing_answers' => empty($state['closing_answers'] ?? []) ? null : array_values($state['closing_answers']),
                 'score_thought_after' => $norm($state['score_thought_after'] ?? null),
                 'score_feeling_after' => $norm($state['score_feeling_after'] ?? null),
                 'reaction' => $norm($state['reaction'] ?? null),
