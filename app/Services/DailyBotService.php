@@ -208,14 +208,14 @@ class DailyBotService
     }
 
     // Also handle callback queries (inline buttons) if we use them
-    public function handleCallback(string $chatId, string $platform, string $data, string $callbackQueryId): void
+    public function handleCallback(string $chatId, string $platform, string $data, string $callbackQueryId, ?int $messageId = null): void
     {
         $this->api->answerCallbackQuery($callbackQueryId);
         $this->touchSubscriber($chatId, $platform);
 
         // CBT — thought_record_* callbacks
         if (str_starts_with($data, 'thought_record_')) {
-            $this->handleCbtCallback($chatId, $platform, $data);
+            $this->handleCbtCallback($chatId, $platform, $data, $messageId);
             return;
         }
 
@@ -292,13 +292,13 @@ class DailyBotService
             . "برای شروع /log را بزن.";
     }
 
-    private function handleCbtCallback(string $chatId, string $platform, string $data): void
+    private function handleCbtCallback(string $chatId, string $platform, string $data, ?int $messageId = null): void
     {
         $cbt = $this->cbt();
 
         // distortion toggle: thought_record_dist_0 .. 9
         if (preg_match('/^thought_record_dist_(\d+)$/', $data, $m)) {
-            $cbt->addDistortion($chatId, $platform, (int) $m[1]);
+            $cbt->addDistortion($chatId, $platform, (int) $m[1], $messageId);
             return;
         }
 
@@ -309,6 +309,7 @@ class DailyBotService
             'thought_record_skip_event' => $cbt->skipEvent($chatId, $platform),
             'thought_record_cancel' => $cbt->cancel($chatId, $platform),
             'thought_record_dist_done' => $cbt->doneDistortion($chatId, $platform),
+            'thought_record_q_skip' => $cbt->skipQuestion($chatId, $platform),
             'thought_record_view' => $cbt->view($chatId, $platform),
             'thought_record_reset' => $cbt->resetPrompt($chatId, $platform),
             'thought_record_reset_confirm' => $cbt->resetConfirmed($chatId, $platform),

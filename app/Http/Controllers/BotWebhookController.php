@@ -37,8 +37,9 @@ class BotWebhookController extends Controller
                 $chatId = (string) ($cq['message']['chat']['id'] ?? $cq['from']['id'] ?? '');
                 $data = (string) ($cq['data'] ?? '');
                 $cqId = (string) ($cq['id'] ?? '');
+                $messageId = isset($cq['message']['message_id']) ? (int) $cq['message']['message_id'] : null;
                 if ($chatId !== '') {
-                    $service->handleCallback($chatId, $platform, $data, $cqId);
+                    $service->handleCallback($chatId, $platform, $data, $cqId, $messageId);
                 }
                 return response()->json(['ok' => true]);
             }

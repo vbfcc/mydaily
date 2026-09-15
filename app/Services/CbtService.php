@@ -49,6 +49,23 @@ class CbtService
     ];
 
     /**
+     * معنی هر خطای فکری — راهنمای یادآوری که در سوال 2.5 نمایش داده می‌شود.
+     * کلیدها باید دقیقأ همنام با DISTORTIONS باشند.
+     */
+    protected const DISTORTION_DESCRIPTIONS = [
+        'ذهن خوانی' => 'مطمئنی دیگران به تو چه فکر می‌کنند (معمولاً منفی)، بدون مدرک',
+        'پیشگویی' => 'مطمئنی آینده بد می‌شود',
+        'فاجعه سازی' => 'از هر چیز کوچکی یک فاجعه می‌سازی',
+        'فیلتر ذهنی منفی' => 'فقط قسمت‌های بد را می‌بینی، خوبی‌ها را رد می‌کنی',
+        'بی ارزش سازی' => 'کار مثبت خودت یا دیگران را کوچک و بی‌ارزش نشان می‌دهی',
+        'تعمیم افراطی' => 'از یک اتفاق نتیجه‌گیری کلی «همیشه/هرگز» می‌گیری',
+        'تفکر همه یا هیچ' => 'سیاه یا سفید؛ «متوسط خوب» وجود ندارد',
+        'باید ها و نباید ها' => 'با «باید» و «نباید» سخت‌گیرانه به خود و دیگران فشار می‌آوری',
+        'برچسب زدن' => 'به جای رفتار، به خود/دیگران برچسب می‌زنی («من ابله‌ام»)',
+        'مقصر دانستن خود یا دیگران' => 'همه‌ی تقصیرها را به خودت یا به طرف مقابل می‌چسبانی',
+    ];
+
+    /**
      * سوال‌های سقراطی بعد از نمره‌ی باور.
      * کلیدها هم نام فیلد در state/فایل ذخیره‌سازی هستند.
      */
@@ -267,7 +284,7 @@ class CbtService
 
     // ── Distortion buttons ──
 
-    public function addDistortion(string $chatId, string $platform, int $index): void
+    public function addDistortion(string $chatId, string $platform, int $index, ?int $messageId = null): void
     {
         $state = $this->getState($chatId, $platform);
         if (! $state || ($state['step'] ?? null) !== 'distortion') {
@@ -288,7 +305,11 @@ class CbtService
             $this->setState($chatId, $platform, $state);
         }
 
-        $this->askDistortion($chatId, $platform);
+        if ($messageId !== null) {
+            $this->editDistortion($chatId, $messageId, $platform);
+        } else {
+            $this->askDistortion($chatId, $platform);
+        }
     }
 
     public function doneDistortion(string $chatId, string $platform): void
@@ -346,8 +367,41 @@ class CbtService
         $total = count($keys);
 
         $this->api->sendMessageWithInlineKeyboard($chatId, "🔍 سوال ".($index + 1)." از {$total}:\n{$question}", [
+            [['text' => '⏭️ سوال بعدی (بدون پاسخ)', 'callback_data' => 'thought_record_q_skip']],
             [['text' => '⭕ انصراف', 'callback_data' => 'thought_record_cancel']],
         ]);
+    }
+
+    public function skipQuestion(string $chatId, string $platform): void
+    {
+        $state = $this->getState($chatId, $platform);
+        if (! $state || ($state['step'] ?? null) !== 'question') {
+            $this->menu($chatId, $platform);
+
+            return;
+        }
+
+        $keys = array_keys(self::QUESTIONS);
+        $index = $state['question_index'] ?? 0;
+        $key = $keys[$index] ?? null;
+
+        if ($key && empty($state['answers'][$key])) {
+            // علامت نزده یعنی بدون پاسخ — خالی می‌ماند
+            $state['answers'][$key] = null;
+        }
+
+        $index++;
+        if ($index < count($keys)) {
+            $state['question_index'] = $index;
+            $this->setState($chatId, $platform, $state);
+            $this->askQuestion($chatId, $index);
+
+            return;
+        }
+
+        $state['step'] = 'score_thought_after';
+        $this->setState($chatId, $platform, $state);
+        $this->askScoreThoughtAfter($chatId);
     }
 
     protected function askScoreThoughtAfter(string $chatId): void
@@ -376,13 +430,44 @@ class CbtService
         $state = $this->getState($chatId, $platform);
         $selected = $state['distortions'] ?? [];
 
+        $this->api->sendMessageWithInlineKeyboard($chatId, $this->distortionText($selected), $this->distortionKeyboard($selected));
+    }
+
+    protected function editDistortion(string $chatId, int $messageId, string $platform): void
+    {
+        $state = $this->getState($chatId, $platform);
+        $selected = $state['distortions'] ?? [];
+
+        $this->api->editMessageText($chatId, $messageId, $this->distortionText($selected), $this->distortionKeyboard($selected));
+    }
+
+    /** متن سوال 2.5 + راهنمای معنی خطاهای فکری. */
+    protected function distortionText(array $selected): string
+    {
         $selectedText = '';
         if (! empty($selected)) {
             $selectedText = "\n✅ انتخاب شده: ".implode('، ', $selected)."\n";
         }
 
-        $text = "2.5️⃣ کدوم خطاهای فکری تو این فکر بود؟{$selectedText}\nمیتونی دکمه بزنی یا تایپ کنی.";
+        return "2.5️⃣ کدوم خطاهای فکری تو این فکر بود؟{$selectedText}\n\n"
+            . "📖 راهنما (معنی هر خطا):\n"
+            . $this->distortionGuide()
+            . "\n\nمیتونی دکمه بزنی یا تایپ کنی.";
+    }
 
+    protected function distortionGuide(): string
+    {
+        $lines = [];
+        foreach (self::DISTORTIONS as $i => $name) {
+            $desc = self::DISTORTION_DESCRIPTIONS[$name] ?? '';
+            $lines[] = self::DISTORTION_EMOJIS[$i].' '.$name.' — '.$desc;
+        }
+
+        return implode("\n", $lines);
+    }
+
+    protected function distortionKeyboard(array $selected): array
+    {
         $keyboard = [];
         for ($i = 0; $i < count(self::DISTORTIONS); $i += 2) {
             $row = [];
@@ -406,7 +491,7 @@ class CbtService
         $keyboard[] = [['text' => '✅ تمام', 'callback_data' => 'thought_record_dist_done']];
         $keyboard[] = [['text' => '⭕ انصراف', 'callback_data' => 'thought_record_cancel']];
 
-        $this->api->sendMessageWithInlineKeyboard($chatId, $text, $keyboard);
+        return $keyboard;
     }
 
     // ── Save (DB) ──

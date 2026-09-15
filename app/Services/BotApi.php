@@ -184,6 +184,20 @@ class BotApi
         return $this->sendRequest('sendMessage', $params);
     }
 
+    public function editMessageText($chatId, int $messageId, string $text, array $inlineKeyboard): array
+    {
+        $params = [
+            'chat_id' => $chatId,
+            'message_id' => $messageId,
+            'text' => $text,
+            'reply_markup' => json_encode(['inline_keyboard' => $inlineKeyboard]),
+        ];
+        if ($this->getCurrentPlatform() === 'telegram') {
+            $params['parse_mode'] = 'HTML';
+        }
+        return $this->sendRequest('editMessageText', $params);
+    }
+
     public function sendMessageHtml($chatId, string $text, ?array $inlineKeyboard = null): array
     {
         $params = [
