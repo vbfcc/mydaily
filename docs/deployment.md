@@ -40,7 +40,7 @@ Server Path:   /var/www/html/my-daily
 DocumentRoot:  /var/www/html/my-daily/public
 Domain:        https://daily.factorland.ir
 Apache vhost:  /etc/apache2/sites-available/daily.factorland.ir.conf
-DB:            MySQL mydaily @ 127.0.0.1:3306 (root / @Vbfc344334 — مشترک با factorchi)
+DB:            MySQL mydaily @ 127.0.0.1:3306 (root / <DB_PASSWORD در .env سرور> — مشترک با factorchi)
 Env:           /var/www/html/my-daily/.env
 Storage:       storage/* + bootstrap/cache → chown www-data:www-data, chmod 775
 ```
@@ -72,8 +72,8 @@ DB_HOST=127.0.0.1
 DB_PORT=3306
 DB_DATABASE=mydaily
 DB_USERNAME=root
-DB_PASSWORD=@Vbfc344334
-TELEGRAM_BOT_TOKEN=8765222783:AAGRyr_lMbUU02HxQfi3KwWX9aUNEzvauDM
+DB_PASSWORD=<از .env سرور بخوان — اینجا ننویس>
+TELEGRAM_BOT_TOKEN=<از @BotFather — اینجا ننویس>
 BALE_BOT_TOKEN=
 TELEGRAM_PROXY_URL=https://tm.factorland.ir/telegram-proxy.php
 # فالبک کامنت: #TELEGRAM_PROXY_URL=https://tg.factorland.ir/telegram-proxy.php
@@ -81,7 +81,7 @@ TELEGRAM_PROXY_URL=https://tm.factorland.ir/telegram-proxy.php
 
 > دیتابیس `mydaily` اگر نبود:
 > ```bash
-> mysql -u root -p'@Vbfc344334' -e 'CREATE DATABASE IF NOT EXISTS mydaily CHARACTER SET utf8mb4 COLLATE utf8mb4_unicode_ci;'
+> mysql -u root -p -e 'CREATE DATABASE IF NOT EXISTS mydaily CHARACTER SET utf8mb4 COLLATE utf8mb4_unicode_ci;'
 > ```
 
 ### Apache vhost

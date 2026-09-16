@@ -21,7 +21,7 @@ Framework:       Laravel 10.x (laravel/framework 10.x, PHP 8.2 — requires ^8.1
 Server Path:     /var/www/html/api.factorland.ir
 DocumentRoot:    /var/www/html/api.factorland.ir/public
 Domain:          https://api.factorland.ir
-DB:              MySQL factorchi on 127.0.0.1 (root / @Vbfc344334)
+DB:              MySQL factorchi on 127.0.0.1 (root / <رمز در .env سرور>)
 Queue:           database (jobs table), scheduler via Kernel.php
 ```
 
@@ -42,7 +42,7 @@ Direct Webhooks (Iran server):
 Relay Webhook (Telegram via foreign VPS — USE THIS):
   Telegram:      https://tm.factorland.ir/daily-webhook-relay.php
 Health:          https://daily.factorland.ir/api/health
-DB:              MySQL `mydaily` on 127.0.0.1:3306 (user root, pass @Vbfc344334 — same as factorchi)
+DB:              MySQL `mydaily` on 127.0.0.1:3306 (user root, رمز در .env سرور — same as factorchi)
                  Loکال: sqlite database/database.sqlite (pdo_sqlite فعال)
 Apache vhost:    /etc/apache2/sites-available/daily.factorland.ir.conf
                  enabled → /etc/apache2/sites-enabled/daily.factorland.ir.conf

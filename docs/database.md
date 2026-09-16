@@ -3,11 +3,11 @@
 ## اتصال
 
 - **لوکال:** `sqlite` — `database/database.sqlite` (`DB_CONNECTION=sqlite`, `DB_DATABASE=E:/mydayli/database/database.sqlite`), نیاز به `pdo_sqlite` + `sqlite3` در `php.ini`
-- **سرور:** `MySQL 8` — `DB_HOST=127.0.0.1:3306`, `DB_DATABASE=mydaily`, `DB_USERNAME=root`, `DB_PASSWORD=@Vbfc344334` (مشترک با `factorchi`)
+- **سرور:** `MySQL 8` — `DB_HOST=127.0.0.1:3306`, `DB_DATABASE=mydaily`, `DB_USERNAME=root`, `DB_PASSWORD=<در .env سرور>` (مشترک با `factorchi`)
 
 ```bash
 # ساخت DB روی سرور (اگر نبود)
-mysql -u root -p'@Vbfc344334' -e 'CREATE DATABASE IF NOT EXISTS mydaily CHARACTER SET utf8mb4 COLLATE utf8mb4_unicode_ci;'
+mysql -u root -p -e 'CREATE DATABASE IF NOT EXISTS mydaily CHARACTER SET utf8mb4 COLLATE utf8mb4_unicode_ci;'
 ```
 
 ## مایگریشن‌ها
@@ -139,5 +139,5 @@ CREATE TABLE `bot_states` (
 
 - روی سرور `pdo_sqlite` فعال نیست — MySQL اجباری است؛ لوکال هر دو کار می‌کند.
 - `entry_date` از نوع `date` است ولی Eloquent آن را با `date` cast به `Carbon` با `00:00:00` ذخیره می‌کند؛ کوئری‌ها حتماً `whereDate` استفاده می‌کنند تا `2026-09-06` با `2026-09-06 00:00:00` مچ شود.
-- بک‌آپ ساده: `mysqldump -u root -p'@Vbfc344334' mydaily > mydaily.sql`
+- بک‌آپ ساده: `mysqldump -u root -p mydaily > mydaily.sql`
 
