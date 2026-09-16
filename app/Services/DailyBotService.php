@@ -5,6 +5,7 @@ namespace App\Services;
 use App\Models\BotState;
 use App\Models\BotSubscriber;
 use App\Models\DailyEntry;
+use App\Models\Note;
 use App\Models\Routine;
 use App\Models\RoutineLog;
 use Carbon\Carbon;
@@ -59,6 +60,15 @@ class DailyBotService
             || $text === '/fekr';
     }
 
+    private function isNoteText(string $text): bool
+    {
+        return $text === '📌 نکته'
+            || $text === 'نکته'
+            || $text === '/note'
+            || $text === '/notes'
+            || $text === '/nokte';
+    }
+
     // ── Public entry point for every incoming message ──
 
     public function handle(string $chatId, string $platform, string $text, ?string $username = null): void
@@ -78,7 +88,7 @@ class DailyBotService
             }
             // Allow hard commands to interrupt CBT flow
             $isDirectDayBtn = str_starts_with($text, '📝 دیروز') || str_starts_with($text, '📝 امروز') || $text === 'دیروز' || $text === 'امروز';
-            if (in_array($text, ['/start', '/today', '/week', '/log', '/export', '/help', '/routine', '/routines', '🔁 روتین‌ها', '/profile', '👤 حساب کاربری', '👤 پروفایل', '🧠 دفترچه فکر و احساس', '/cbt', '/thought', '/fekr']) || $isDirectDayBtn || $this->isCbtText($text)) {
+            if (in_array($text, ['/start', '/today', '/week', '/log', '/export', '/help', '/routine', '/routines', '🔁 روتین‌ها', '/profile', '👤 حساب کاربری', '👤 پروفایل', '🧠 دفترچه فکر و احساس', '/cbt', '/thought', '/fekr', '📌 نکته', 'نکته', '/note', '/notes', '/nokte']) || $isDirectDayBtn || $this->isCbtText($text) || $this->isNoteText($text)) {
                 $cbt->clear($chatId, $platform);
                 // fall through to normal handling (also clear BotState if needed below)
                 $this->clearState($chatId, $platform);
@@ -112,8 +122,8 @@ class DailyBotService
 
         // If in a flow, handle step input before checking other commands
         if ($state && $state->state !== null) {
-            // Allow /start /today /week /export /routine + direct day buttons + CBT to interrupt flow
-            if (in_array($text, ['/start', '/today', '/week', '/log', '/export', '/help', '/routine', '/routines', '🔁 روتین‌ها', '/profile', '👤 حساب کاربری', '🧠 دفترچه فکر و احساس', '/cbt']) || $isDirectDayBtn || $this->isCbtText($text)) {
+            // Allow /start /today /week /export /routine /note + direct day buttons + CBT to interrupt flow
+            if (in_array($text, ['/start', '/today', '/week', '/log', '/export', '/help', '/routine', '/routines', '🔁 روتین‌ها', '/profile', '👤 حساب کاربری', '🧠 دفترچه فکر و احساس', '/cbt', '📌 نکته', 'نکته', '/note', '/notes', '/nokte']) || $isDirectDayBtn || $this->isCbtText($text) || $this->isNoteText($text)) {
                 $this->clearState($chatId, $platform);
                 // fall through to command handling below
             } else {
@@ -155,6 +165,12 @@ class DailyBotService
             return;
         }
 
+        if ($this->isNoteText($text)) {
+            if ($state && $state->state !== null) $this->clearState($chatId, $platform);
+            $this->showNotesMenu($chatId, $platform, 0);
+            return;
+        }
+
         if ($text === '/profile' || $text === '👤 حساب کاربری' || $text === '👤 پروفایل') {
             $this->handleProfile($chatId, $platform);
             return;
@@ -183,6 +199,11 @@ class DailyBotService
             return;
         }
 
+        if ($this->isNoteText($text)) {
+            $this->showNotesMenu($chatId, $platform, 0);
+            return;
+        }
+
         match (true) {
             $text === '/start' => $this->handleStart($chatId, $platform),
             $text === '/log' => $this->startLogging($chatId, $platform),
@@ -203,6 +224,10 @@ class DailyBotService
             $text === '📥 اکسل' => $this->showExportMenu($chatId, $platform),
             $text === '🧠 دفترچه فکر و احساس' => $cbt->menu($chatId, $platform),
             $text === '/cbt' => $cbt->menu($chatId, $platform),
+            $text === '📌 نکته' => $this->showNotesMenu($chatId, $platform, 0),
+            $text === 'نکته' => $this->showNotesMenu($chatId, $platform, 0),
+            $text === '/note' => $this->showNotesMenu($chatId, $platform, 0),
+            $text === '/notes' => $this->showNotesMenu($chatId, $platform, 0),
             default => $this->handleUnknown($chatId),
         };
     }
@@ -258,6 +283,12 @@ class DailyBotService
             return;
         }
 
+        // Notes — note:new / note:list / note:page:N / note:view:ID / note:del:ID / note:delconf:ID / note:menu
+        if ($data === 'note:new' || $data === 'note:list' || $data === 'note:menu' || str_starts_with($data, 'note:page:') || str_starts_with($data, 'note:view:') || str_starts_with($data, 'note:delconf:') || str_starts_with($data, 'note:del:')) {
+            $this->handleNoteCallback($chatId, $platform, $data);
+            return;
+        }
+
         // Map callbacks to inputs for gym/social/mood steps
         $state = $this->getState($chatId, $platform);
         if ($state && $state->state) {
@@ -286,6 +317,7 @@ class DailyBotService
             . "/week — نمایش ۷ روز گذشته\n"
             . "/routine — مدیریت روتین‌ها (مثل روتین پوستی با تاریخ شروع/پایان)\n"
             . "/cbt — دفترچه فکر و احساس (CBT) — روانشناس گفته هر بار حس منفی داشتی، این جدول رو پر کن\n"
+            . "/note — نکته‌ها (یادداشت با اسم، متن تا ۱۵۰۰ حرف)\n"
             . "/profile — حساب کاربری (نام، شناسه، تاریخ عضویت)\n"
             . "/export — خروجی JSON (با انتخاب بازه؛ فقط JSON)\n"
             . "/cancel — لغو ثبت جاری\n\n"
@@ -350,14 +382,15 @@ class DailyBotService
                 ['📝 ثبت امروز', "📝 دیروز — {$yesterdayShamsi}"],
                 ['📊 امروز', '📅 هفته'],
                 ['📄 JSON', '🔁 روتین‌ها'],
-                ['🧠 دفترچه فکر و احساس', '👤 حساب کاربری'],
+                ['🧠 دفترچه فکر و احساس', '📌 نکته'],
+                ['👤 حساب کاربری'],
             ];
         }
         return [
             ['📝 ثبت امروز', '📊 امروز'],
             ['📅 هفته', '📄 JSON'],
             ['🔁 روتین‌ها', '🧠 دفترچه فکر و احساس'],
-            ['👤 حساب کاربری'],
+            ['📌 نکته', '👤 حساب کاربری'],
         ];
     }
 
@@ -523,7 +556,7 @@ class DailyBotService
 
     private function handleUnknown(string $chatId): void
     {
-        $this->api->sendMessage($chatId, "متوجه نشدم 🤔\nبرای ثبت امروز /log و برای دیدن امروز /today را بزن. راهنما: /start\nیا /export برای خروجی JSON، و /routine برای مدیریت روتین‌ها");
+        $this->api->sendMessage($chatId, "متوجه نشدم 🤔\nبرای ثبت امروز /log و برای دیدن امروز /today را بزن. راهنما: /start\nیا /export برای خروجی JSON، و /routine برای مدیریت روتین‌ها، و /note برای نکته‌ها");
     }
 
     private function startLogging(string $chatId, string $platform): void
@@ -909,6 +942,51 @@ class DailyBotService
                 $this->handleRoutineNote($chatId, $platform, $data, mb_substr($input, 0, 500));
                 break;
 
+            case 'waiting_note_title':
+                $title = trim($input);
+                if ($title === '') {
+                    $this->api->sendMessage($chatId, "اسم نکته خالیه 😅\nمثلا بنویس: ایده کتاب\n(برای لغو /cancel)");
+                    return;
+                }
+                if (mb_strlen($title) > 100) {
+                    $this->api->sendMessage($chatId, "اسمت " . mb_strlen($title) . " حرفه، حداکثر ۱۰۰ حرفه.\nکوتاه‌تر بفرست:");
+                    return;
+                }
+                $data['note_title'] = $title;
+                $this->setState($chatId, $platform, 'waiting_note_body', $data);
+                $this->api->sendMessage($chatId, "حالا متن نکته «{$title}» رو بفرست:\n(حداکثر ۱۵۰۰ کاراکتر — برای لغو /cancel)");
+                break;
+
+            case 'waiting_note_body':
+                $body = trim($input);
+                if ($body === '') {
+                    $this->api->sendMessage($chatId, "متن خالیه 😅\nمتن نکته رو بفرست (حداکثر ۱۵۰۰ کاراکتر):");
+                    return;
+                }
+                $len = mb_strlen($body);
+                if ($len > 1500) {
+                    $over = $len - 1500;
+                    $this->api->sendMessage($chatId, "متنت {$len} کاراکتره، حداکثر ۱۵۰۰ مجازه.\n{$over} حرف کم کن و دوباره بفرست:");
+                    return;
+                }
+                $title = $data['note_title'] ?? 'بدون اسم';
+                $note = Note::create([
+                    'chat_id' => $chatId,
+                    'platform' => $platform,
+                    'title' => mb_substr($title, 0, 100),
+                    'body' => $body,
+                ]);
+                $this->clearState($chatId, $platform);
+                $shamsi = \App\Helpers\ShamsiDateHelper::dateWithDay($note->created_at);
+                $this->api->sendMessageWithInlineKeyboard($chatId,
+                    "✅ نکته «{$note->title}» ذخیره شد!\n📅 {$shamsi}\n📝 {$len}/۱۵۰۰ حرف",
+                    [
+                        [['text' => '👁 دیدن نکته', 'callback_data' => "note:view:{$note->id}"]],
+                        [['text' => '📋 لیست نکته‌ها', 'callback_data' => 'note:list'], ['text' => '➕ نکته جدید', 'callback_data' => 'note:new']],
+                        [['text' => '🏠 منوی اصلی', 'callback_data' => 'note:menu']],
+                    ]);
+                break;
+
             default:
                 $this->clearState($chatId, $platform);
                 $this->api->sendMessage($chatId, "خطا در وضعیت. دوباره /log را بزن.");
@@ -1062,10 +1140,161 @@ class DailyBotService
         $this->api->sendMessageWithKeyboard($chatId, implode("\n", $lines), $this->mainMenuKeyboard($chatId, $platform));
     }
 
+    // ── Notes (نکته‌ها: یادداشت با اسم + متن تا ۱۵۰۰ حرف + تاریخ شمسی) ──
+
+    private const NOTE_PAGE_SIZE = 5;
+
     private function startRoutineWizard(string $chatId, string $platform): void
     {
         $this->setState($chatId, $platform, 'waiting_routine_title', []);
         $this->api->sendMessage($chatId, "➕ روتین جدید!\n\nاسم روتین چیه؟\nمثلا: روتین پوستی\n(برای لغو /cancel)");
+    }
+
+    private function startNoteWizard(string $chatId, string $platform): void
+    {
+        $this->setState($chatId, $platform, 'waiting_note_title', []);
+        $this->api->sendMessage($chatId, "📝 نکته جدید!\n\nاسم نکته چیه؟\nمثلا: ایده کتاب\n(حداکثر ۱۰۰ حرف — برای لغو /cancel)");
+    }
+
+    private function handleNoteCallback(string $chatId, string $platform, string $data): void
+    {
+        if ($data === 'note:new') {
+            $this->clearState($chatId, $platform);
+            $this->startNoteWizard($chatId, $platform);
+            return;
+        }
+        if ($data === 'note:list') {
+            $this->showNotesMenu($chatId, $platform, 0);
+            return;
+        }
+        if ($data === 'note:menu') {
+            $this->clearState($chatId, $platform);
+            $this->sendMainMenu($chatId, $platform);
+            return;
+        }
+        if (str_starts_with($data, 'note:page:')) {
+            $page = (int) substr($data, 10);
+            $this->showNotesMenu($chatId, $platform, max(0, $page));
+            return;
+        }
+        if (str_starts_with($data, 'note:view:')) {
+            $this->showNoteDetail($chatId, $platform, substr($data, 10));
+            return;
+        }
+        if (str_starts_with($data, 'note:delconf:')) {
+            $this->deleteNote($chatId, $platform, substr($data, 13));
+            return;
+        }
+        if (str_starts_with($data, 'note:del:')) {
+            $this->askDeleteNote($chatId, $platform, substr($data, 9));
+            return;
+        }
+    }
+
+    /** لیست نکته‌های قبلی + دکمه ساخت جدید — با صفحه‌بندی قبل/بعد. */
+    private function showNotesMenu(string $chatId, string $platform, int $page = 0): void
+    {
+        $this->clearState($chatId, $platform);
+
+        $total = Note::where('chat_id', $chatId)->where('platform', $platform)->count();
+
+        if ($total === 0) {
+            $this->api->sendMessageWithInlineKeyboard($chatId,
+                "📌 نکته‌ها\n\nهنوز نکته‌ای نداری.\nاسم + متن (تا ۱۵۰۰ حرف) بفرست تا ذخیره کنم.",
+                [
+                    [['text' => '➕ ساخت نکته جدید', 'callback_data' => 'note:new']],
+                    [['text' => '🏠 منوی اصلی', 'callback_data' => 'note:menu']],
+                ]);
+            return;
+        }
+
+        $perPage = self::NOTE_PAGE_SIZE;
+        $totalPages = (int) ceil($total / $perPage);
+        $page = max(0, min($page, $totalPages - 1));
+
+        $notes = Note::where('chat_id', $chatId)
+            ->where('platform', $platform)
+            ->orderByDesc('id')
+            ->skip($page * $perPage)
+            ->take($perPage)
+            ->get();
+
+        $lines = ["📌 نکته‌ها ({$total} مورد) — صفحه " . ($page + 1) . " از {$totalPages}:\n"];
+        $keyboard = [];
+        foreach ($notes as $n) {
+            $shamsi = \App\Helpers\ShamsiDateHelper::dateWithDay($n->created_at);
+            $len = mb_strlen((string) $n->body);
+            $preview = mb_substr((string) $n->body, 0, 40);
+            if (mb_strlen((string) $n->body) > 40) $preview .= '…';
+            $lines[] = "• «{$n->title}» — {$shamsi} ({$len} حرف)\n  {$preview}";
+            $btnTitle = mb_substr($n->title, 0, 20);
+            $keyboard[] = [['text' => "📌 {$btnTitle}", 'callback_data' => "note:view:{$n->id}"]];
+        }
+
+        $lines[] = "\nبرای دیدن متن کامل روی هر نکته بزن.";
+
+        // ساخت + صفحه‌بندی
+        $keyboard[] = [['text' => '➕ ساخت نکته جدید', 'callback_data' => 'note:new']];
+        if ($totalPages > 1) {
+            $nav = [];
+            if ($page > 0) $nav[] = ['text' => '◀ قبلی', 'callback_data' => 'note:page:' . ($page - 1)];
+            if ($page < $totalPages - 1) $nav[] = ['text' => 'بعدی ▶', 'callback_data' => 'note:page:' . ($page + 1)];
+            if (!empty($nav)) $keyboard[] = $nav;
+        }
+        $keyboard[] = [['text' => '🏠 منوی اصلی', 'callback_data' => 'note:menu']];
+
+        $this->api->sendMessageWithInlineKeyboard($chatId, implode("\n", $lines), $keyboard);
+    }
+
+    /** نمایش یک نکته با اسم + متن کامل + تاریخ شمسی ایجاد. */
+    private function showNoteDetail(string $chatId, string $platform, string $id): void
+    {
+        if (!ctype_digit($id)) {
+            $this->showNotesMenu($chatId, $platform, 0);
+            return;
+        }
+        $note = Note::where('chat_id', $chatId)->where('platform', $platform)->where('id', (int) $id)->first();
+        if (!$note) {
+            $this->api->sendMessage($chatId, "نکته‌ای با این مشخصات پیدا نکردم.");
+            $this->showNotesMenu($chatId, $platform, 0);
+            return;
+        }
+        $shamsi = \App\Helpers\ShamsiDateHelper::dateWithDay($note->created_at);
+        $len = mb_strlen((string) $note->body);
+        $text = "📌 «{$note->title}»\n📅 ایجاد: {$shamsi}\n📝 {$len}/۱۵۰۰ حرف\n\n{$note->body}";
+
+        // تلگرام سقف ~۴۰۹۶ کاراکتر دارد — متن ما حداکثر ~۱۶۰۰ است، مشکلی نیست
+        $this->api->sendMessageWithInlineKeyboard($chatId, $text, [
+            [['text' => '🗑 حذف', 'callback_data' => "note:del:{$note->id}"], ['text' => '📋 لیست نکته‌ها', 'callback_data' => 'note:list']],
+            [['text' => '➕ نکته جدید', 'callback_data' => 'note:new'], ['text' => '🏠 منوی اصلی', 'callback_data' => 'note:menu']],
+        ]);
+    }
+
+    private function askDeleteNote(string $chatId, string $platform, string $id): void
+    {
+        $note = Note::where('chat_id', $chatId)->where('platform', $platform)->where('id', (int) $id)->first();
+        if (!$note) {
+            $this->showNotesMenu($chatId, $platform, 0);
+            return;
+        }
+        $this->api->sendMessageWithInlineKeyboard($chatId,
+            "🗑 «{$note->title}» حذف بشه؟",
+            [
+                [['text' => '✅ بله، حذف کن', 'callback_data' => "note:delconf:{$note->id}"], ['text' => '↩ انصراف', 'callback_data' => "note:view:{$note->id}"]],
+            ]);
+    }
+
+    private function deleteNote(string $chatId, string $platform, string $id): void
+    {
+        $note = Note::where('chat_id', $chatId)->where('platform', $platform)->where('id', (int) $id)->first();
+        if (!$note) {
+            $this->showNotesMenu($chatId, $platform, 0);
+            return;
+        }
+        $title = $note->title;
+        $note->delete();
+        $this->api->sendMessage($chatId, "🗑 نکته «{$title}» حذف شد.");
+        $this->showNotesMenu($chatId, $platform, 0);
     }
 
     /** ساخت نهایی روتین در انتهای ویزارد — $remindAt به وقت تهران (HH:MM) یا null؛ $silent = سایلنت (بدون صدا). */
