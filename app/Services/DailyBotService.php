@@ -283,8 +283,8 @@ class DailyBotService
             return;
         }
 
-        // Notes — note:new / note:list / note:page:N / note:view:ID / note:del:ID / note:delconf:ID / note:menu
-        if ($data === 'note:new' || $data === 'note:list' || $data === 'note:menu' || str_starts_with($data, 'note:page:') || str_starts_with($data, 'note:view:') || str_starts_with($data, 'note:delconf:') || str_starts_with($data, 'note:del:')) {
+        // Notes — note:new / note:list / note:page:N / note:view:ID / note:del:ID / note:delconf:ID / note:editt:ID / note:editb:ID / note:menu
+        if ($data === 'note:new' || $data === 'note:list' || $data === 'note:menu' || str_starts_with($data, 'note:page:') || str_starts_with($data, 'note:view:') || str_starts_with($data, 'note:delconf:') || str_starts_with($data, 'note:del:') || str_starts_with($data, 'note:editt:') || str_starts_with($data, 'note:editb:')) {
             $this->handleNoteCallback($chatId, $platform, $data);
             return;
         }
@@ -987,6 +987,54 @@ class DailyBotService
                     ]);
                 break;
 
+            case 'waiting_note_edit_title':
+                $newTitle = trim($input);
+                if ($newTitle === '') {
+                    $this->api->sendMessage($chatId, "اسم خالیه 😅\nاسم جدید رو بفرست (حداکثر ۱۰۰ حرف):");
+                    return;
+                }
+                if (mb_strlen($newTitle) > 100) {
+                    $this->api->sendMessage($chatId, "اسمت " . mb_strlen($newTitle) . " حرفه، حداکثر ۱۰۰ حرفه.\nکوتاه‌تر بفرست:");
+                    return;
+                }
+                $note = Note::where('chat_id', $chatId)->where('platform', $platform)->where('id', (int) ($data['note_id'] ?? 0))->first();
+                if (!$note) {
+                    $this->clearState($chatId, $platform);
+                    $this->api->sendMessage($chatId, "نکته پیدا نشد (شاید حذف شده).");
+                    $this->showNotesMenu($chatId, $platform, 0);
+                    return;
+                }
+                $note->update(['title' => mb_substr($newTitle, 0, 100)]);
+                $this->clearState($chatId, $platform);
+                $this->api->sendMessage($chatId, "✅ اسم نکته به «{$note->title}» تغییر کرد.");
+                $this->showNoteDetail($chatId, $platform, (string) $note->id);
+                break;
+
+            case 'waiting_note_edit_body':
+                $newBody = trim($input);
+                if ($newBody === '') {
+                    $this->api->sendMessage($chatId, "متن خالیه 😅\nمتن جدید رو بفرست (حداکثر ۱۵۰۰ کاراکتر):");
+                    return;
+                }
+                $len = mb_strlen($newBody);
+                if ($len > 1500) {
+                    $over = $len - 1500;
+                    $this->api->sendMessage($chatId, "متنت {$len} کاراکتره، حداکثر ۱۵۰۰ مجازه.\n{$over} حرف کم کن و دوباره بفرست:");
+                    return;
+                }
+                $note = Note::where('chat_id', $chatId)->where('platform', $platform)->where('id', (int) ($data['note_id'] ?? 0))->first();
+                if (!$note) {
+                    $this->clearState($chatId, $platform);
+                    $this->api->sendMessage($chatId, "نکته پیدا نشد (شاید حذف شده).");
+                    $this->showNotesMenu($chatId, $platform, 0);
+                    return;
+                }
+                $note->update(['body' => $newBody]);
+                $this->clearState($chatId, $platform);
+                $this->api->sendMessage($chatId, "✅ متن نکته «{$note->title}» ویرایش شد ({$len}/۱۵۰۰ حرف).");
+                $this->showNoteDetail($chatId, $platform, (string) $note->id);
+                break;
+
             default:
                 $this->clearState($chatId, $platform);
                 $this->api->sendMessage($chatId, "خطا در وضعیت. دوباره /log را بزن.");
@@ -1189,6 +1237,14 @@ class DailyBotService
             $this->askDeleteNote($chatId, $platform, substr($data, 9));
             return;
         }
+        if (str_starts_with($data, 'note:editt:')) {
+            $this->startNoteEditTitle($chatId, $platform, substr($data, 11));
+            return;
+        }
+        if (str_starts_with($data, 'note:editb:')) {
+            $this->startNoteEditBody($chatId, $platform, substr($data, 11));
+            return;
+        }
     }
 
     /** لیست نکته‌های قبلی + دکمه ساخت جدید — با صفحه‌بندی قبل/بعد. */
@@ -1265,6 +1321,7 @@ class DailyBotService
 
         // تلگرام سقف ~۴۰۹۶ کاراکتر دارد — متن ما حداکثر ~۱۶۰۰ است، مشکلی نیست
         $this->api->sendMessageWithInlineKeyboard($chatId, $text, [
+            [['text' => '✏️ ویرایش اسم', 'callback_data' => "note:editt:{$note->id}"], ['text' => '✏️ ویرایش متن', 'callback_data' => "note:editb:{$note->id}"]],
             [['text' => '🗑 حذف', 'callback_data' => "note:del:{$note->id}"], ['text' => '📋 لیست نکته‌ها', 'callback_data' => 'note:list']],
             [['text' => '➕ نکته جدید', 'callback_data' => 'note:new'], ['text' => '🏠 منوی اصلی', 'callback_data' => 'note:menu']],
         ]);
@@ -1295,6 +1352,41 @@ class DailyBotService
         $note->delete();
         $this->api->sendMessage($chatId, "🗑 نکته «{$title}» حذف شد.");
         $this->showNotesMenu($chatId, $platform, 0);
+    }
+
+    /** شروع ویرایش اسم نکته — state جداگانه تا /cancel هم کار کند. */
+    private function startNoteEditTitle(string $chatId, string $platform, string $id): void
+    {
+        if (!ctype_digit($id)) {
+            $this->showNotesMenu($chatId, $platform, 0);
+            return;
+        }
+        $note = Note::where('chat_id', $chatId)->where('platform', $platform)->where('id', (int) $id)->first();
+        if (!$note) {
+            $this->api->sendMessage($chatId, "نکته‌ای با این مشخصات پیدا نکردم.");
+            $this->showNotesMenu($chatId, $platform, 0);
+            return;
+        }
+        $this->setState($chatId, $platform, 'waiting_note_edit_title', ['note_id' => $note->id]);
+        $this->api->sendMessage($chatId, "✏️ اسم فعلی: «{$note->title}»\nاسم جدید رو بفرست:\n(حداکثر ۱۰۰ حرف — برای لغو /cancel)");
+    }
+
+    /** شروع ویرایش متن نکته — سقف ۱۵۰۰ کاراکتر مثل ساخت. */
+    private function startNoteEditBody(string $chatId, string $platform, string $id): void
+    {
+        if (!ctype_digit($id)) {
+            $this->showNotesMenu($chatId, $platform, 0);
+            return;
+        }
+        $note = Note::where('chat_id', $chatId)->where('platform', $platform)->where('id', (int) $id)->first();
+        if (!$note) {
+            $this->api->sendMessage($chatId, "نکته‌ای با این مشخصات پیدا نکردم.");
+            $this->showNotesMenu($chatId, $platform, 0);
+            return;
+        }
+        $len = mb_strlen((string) $note->body);
+        $this->setState($chatId, $platform, 'waiting_note_edit_body', ['note_id' => $note->id]);
+        $this->api->sendMessage($chatId, "✏️ متن فعلی «{$note->title}» ({$len}/۱۵۰۰ حرف):\n\n{$note->body}\n\n───\nمتن جدید رو بفرست:\n(حداکثر ۱۵۰۰ کاراکتر — برای لغو /cancel)");
     }
 
     /** ساخت نهایی روتین در انتهای ویزارد — $remindAt به وقت تهران (HH:MM) یا null؛ $silent = سایلنت (بدون صدا). */
