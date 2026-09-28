@@ -18,11 +18,13 @@ class ExportController extends Controller
         // Fetch entries
         if ($chatId) {
             $entries = $exportService->getEntries($chatId, $platform, $from, $to);
+            $freeNotes = $exportService->getFreeNotes($chatId, $platform, $from, $to);
         } else {
             $entries = $exportService->getAllEntries($from, $to);
+            $freeNotes = collect();
         }
 
-        if ($entries->isEmpty()) {
+        if ($entries->isEmpty() && $freeNotes->isEmpty()) {
             return response()->json(['ok' => false, 'message' => 'No entries found', 'count' => 0], 404);
         }
 
@@ -49,11 +51,13 @@ class ExportController extends Controller
         return response()->json([
             'ok' => true,
             'count' => $entries->count(),
+            'free_descriptions_count' => $freeNotes->count(),
             'generated_at' => now()->toIso8601String(),
             'generated_at_shamsi' => \App\Helpers\ShamsiDateHelper::fullDateTime(now()),
             'format' => 'json',
             'note' => 'تاریخ‌ها هم میلادی هم شمسی — ستون‌های date_miladi و date_shamsi / date_shamsi_with_day',
             'data' => $data,
+            'free_descriptions' => $exportService->freeNotesToArrayWithShamsi($freeNotes),
         ], 200, [], JSON_UNESCAPED_UNICODE | JSON_PRETTY_PRINT);
     }
 }

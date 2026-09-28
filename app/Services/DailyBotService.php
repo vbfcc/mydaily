@@ -4,7 +4,9 @@ namespace App\Services;
 
 use App\Models\BotState;
 use App\Models\BotSubscriber;
+use App\Models\CoachingProfile;
 use App\Models\DailyEntry;
+use App\Models\FreeNote;
 use App\Models\Note;
 use App\Models\Routine;
 use App\Models\RoutineLog;
@@ -18,14 +20,16 @@ class DailyBotService
 
     // Ordered steps — must match handleStep logic
     private const STEPS = [
-        'waiting_sleep'   => 'sleep_time',
-        'waiting_wake'    => 'wake_time',
-        'waiting_work'    => 'work_hours',
-        'waiting_gym'     => 'gym',
-        'waiting_gaming'  => 'gaming_minutes',
-        'waiting_social'  => 'social',
-        'waiting_mood'    => 'mood',
-        'waiting_trigger' => 'emotional_trigger',
+        'waiting_sleep'             => 'sleep_time',
+        'waiting_wake'              => 'wake_time',
+        'waiting_work'              => 'work_hours',
+        'waiting_gym'               => 'gym',
+        'waiting_gaming'            => 'gaming_minutes',
+        'waiting_social'            => 'social',
+        'waiting_mood'              => 'mood',
+        'waiting_trigger'           => 'emotional_trigger',
+        'waiting_positive_trigger'  => 'positive_trigger',
+        'waiting_positive_intensity' => 'positive_intensity',
     ];
 
     private const STEP_ORDER = [
@@ -37,6 +41,8 @@ class DailyBotService
         'waiting_social',
         'waiting_mood',
         'waiting_trigger',
+        'waiting_positive_trigger',
+        'waiting_positive_intensity',
     ];
 
     public function __construct(BotApi $api)
@@ -69,6 +75,27 @@ class DailyBotService
             || $text === '/nokte';
     }
 
+    private function isFreeNoteText(string $text): bool
+    {
+        return $text === '✍️ توضیحات آزاد'
+            || $text === 'توضیحات آزاد'
+            || $text === 'توضیح آزاد'
+            || $text === '/freenote'
+            || $text === '/free'
+            || $text === '/azad'
+            || $text === '/desc';
+    }
+
+    private function isCoachingText(string $text): bool
+    {
+        return $text === '🔄 آپدیت پرونده کوچینگ'
+            || $text === 'آپدیت پرونده کوچینگ'
+            || $text === 'آپدیت پرونده'
+            || $text === 'پرونده کوچینگ'
+            || $text === '/coaching'
+            || $text === '/coach';
+    }
+
     // ── Public entry point for every incoming message ──
 
     public function handle(string $chatId, string $platform, string $text, ?string $username = null): void
@@ -88,7 +115,7 @@ class DailyBotService
             }
             // Allow hard commands to interrupt CBT flow
             $isDirectDayBtn = str_starts_with($text, '📝 دیروز') || str_starts_with($text, '📝 امروز') || $text === 'دیروز' || $text === 'امروز';
-            if (in_array($text, ['/start', '/today', '/week', '/log', '/export', '/help', '/routine', '/routines', '🔁 روتین‌ها', '/profile', '👤 حساب کاربری', '👤 پروفایل', '🧠 دفترچه فکر و احساس', '/cbt', '/thought', '/fekr', '📌 نکته', 'نکته', '/note', '/notes', '/nokte']) || $isDirectDayBtn || $this->isCbtText($text) || $this->isNoteText($text)) {
+            if (in_array($text, ['/start', '/today', '/week', '/log', '/export', '/help', '/routine', '/routines', '🔁 روتین‌ها', '/profile', '👤 حساب کاربری', '👤 پروفایل', '🧠 دفترچه فکر و احساس', '/cbt', '/thought', '/fekr', '📌 نکته', 'نکته', '/note', '/notes', '/nokte', '✍️ توضیحات آزاد', 'توضیحات آزاد', '/freenote', '/free', '/azad', '/desc', '🔄 آپدیت پرونده کوچینگ', '/coaching', '/coach']) || $isDirectDayBtn || $this->isCbtText($text) || $this->isNoteText($text) || $this->isFreeNoteText($text) || $this->isCoachingText($text)) {
                 $cbt->clear($chatId, $platform);
                 // fall through to normal handling (also clear BotState if needed below)
                 $this->clearState($chatId, $platform);
@@ -122,8 +149,8 @@ class DailyBotService
 
         // If in a flow, handle step input before checking other commands
         if ($state && $state->state !== null) {
-            // Allow /start /today /week /export /routine /note + direct day buttons + CBT to interrupt flow
-            if (in_array($text, ['/start', '/today', '/week', '/log', '/export', '/help', '/routine', '/routines', '🔁 روتین‌ها', '/profile', '👤 حساب کاربری', '🧠 دفترچه فکر و احساس', '/cbt', '📌 نکته', 'نکته', '/note', '/notes', '/nokte']) || $isDirectDayBtn || $this->isCbtText($text) || $this->isNoteText($text)) {
+            // Allow /start /today /week /export /routine /note /freenote /coaching + direct day buttons + CBT to interrupt flow
+            if (in_array($text, ['/start', '/today', '/week', '/log', '/export', '/help', '/routine', '/routines', '🔁 روتین‌ها', '/profile', '👤 حساب کاربری', '🧠 دفترچه فکر و احساس', '/cbt', '📌 نکته', 'نکته', '/note', '/notes', '/nokte', '✍️ توضیحات آزاد', 'توضیحات آزاد', '/freenote', '/free', '/azad', '/desc', '🔄 آپدیت پرونده کوچینگ', '/coaching', '/coach']) || $isDirectDayBtn || $this->isCbtText($text) || $this->isNoteText($text) || $this->isFreeNoteText($text) || $this->isCoachingText($text)) {
                 $this->clearState($chatId, $platform);
                 // fall through to command handling below
             } else {
@@ -171,6 +198,18 @@ class DailyBotService
             return;
         }
 
+        if ($this->isFreeNoteText($text)) {
+            if ($state && $state->state !== null) $this->clearState($chatId, $platform);
+            $this->showFreeNotesMenu($chatId, $platform, 0);
+            return;
+        }
+
+        if ($this->isCoachingText($text)) {
+            if ($state && $state->state !== null) $this->clearState($chatId, $platform);
+            $this->showCoachingUpdate($chatId, $platform);
+            return;
+        }
+
         if ($text === '/profile' || $text === '👤 حساب کاربری' || $text === '👤 پروفایل') {
             $this->handleProfile($chatId, $platform);
             return;
@@ -204,6 +243,16 @@ class DailyBotService
             return;
         }
 
+        if ($this->isFreeNoteText($text)) {
+            $this->showFreeNotesMenu($chatId, $platform, 0);
+            return;
+        }
+
+        if ($this->isCoachingText($text)) {
+            $this->showCoachingUpdate($chatId, $platform);
+            return;
+        }
+
         match (true) {
             $text === '/start' => $this->handleStart($chatId, $platform),
             $text === '/log' => $this->startLogging($chatId, $platform),
@@ -228,6 +277,15 @@ class DailyBotService
             $text === 'نکته' => $this->showNotesMenu($chatId, $platform, 0),
             $text === '/note' => $this->showNotesMenu($chatId, $platform, 0),
             $text === '/notes' => $this->showNotesMenu($chatId, $platform, 0),
+            $text === '✍️ توضیحات آزاد' => $this->showFreeNotesMenu($chatId, $platform, 0),
+            $text === 'توضیحات آزاد' => $this->showFreeNotesMenu($chatId, $platform, 0),
+            $text === '/freenote' => $this->showFreeNotesMenu($chatId, $platform, 0),
+            $text === '/free' => $this->showFreeNotesMenu($chatId, $platform, 0),
+            $text === '/azad' => $this->showFreeNotesMenu($chatId, $platform, 0),
+            $text === '/desc' => $this->showFreeNotesMenu($chatId, $platform, 0),
+            $text === '🔄 آپدیت پرونده کوچینگ' => $this->showCoachingUpdate($chatId, $platform),
+            $text === '/coaching' => $this->showCoachingUpdate($chatId, $platform),
+            $text === '/coach' => $this->showCoachingUpdate($chatId, $platform),
             default => $this->handleUnknown($chatId),
         };
     }
@@ -289,6 +347,12 @@ class DailyBotService
             return;
         }
 
+        // Free notes (توضیحات آزاد — بدون تایتل) — free:new / free:list / free:page:N / free:view:ID / free:del:ID / free:delconf:ID / free:edit:ID / free:menu
+        if ($data === 'free:new' || $data === 'free:list' || $data === 'free:menu' || str_starts_with($data, 'free:page:') || str_starts_with($data, 'free:view:') || str_starts_with($data, 'free:delconf:') || str_starts_with($data, 'free:del:') || str_starts_with($data, 'free:edit:')) {
+            $this->handleFreeNoteCallback($chatId, $platform, $data);
+            return;
+        }
+
         // Map callbacks to inputs for gym/social/mood steps
         $state = $this->getState($chatId, $platform);
         if ($state && $state->state) {
@@ -309,8 +373,8 @@ class DailyBotService
     {
         return "سلام! 👋\n"
             . "من ربات مای‌دیلی هستم — دستیار ثبت فعالیت‌های روزانه‌ات.\n\n"
-            . "هفت مورد را هر روز ثبت می‌کنیم:\n"
-            . "😴 خواب/بیداری — 💼 کار مفید — 🏋️ باشگاه — 🎮 گیم — 👥 تعامل اجتماعی — 😊 حال (۱-۱۰) — 💭 محرک احساسی\n\n"
+            . "این موارد را هر روز ثبت می‌کنیم:\n"
+            . "😴 خواب/بیداری — 💼 کار مفید — 🏋️ باشگاه — 🎮 گیم — 👥 تعامل اجتماعی — 😊 حال (۱-۱۰) — 💭 محرک احساسی — 🌟 عامل مثبت و شدت اثرش\n\n"
             . "دستورات:\n"
             . "/log — شروع ثبت امروز (مرحله به مرحله)\n"
             . "/today — نمایش ثبت امروز\n"
@@ -318,6 +382,8 @@ class DailyBotService
             . "/routine — مدیریت روتین‌ها (مثل روتین پوستی با تاریخ شروع/پایان)\n"
             . "/cbt — دفترچه فکر و احساس (CBT) — روانشناس گفته هر بار حس منفی داشتی، این جدول رو پر کن\n"
             . "/note — نکته‌ها (یادداشت با اسم، متن تا ۱۵۰۰ حرف)\n"
+            . "/freenote — توضیحات آزاد (بدون تایتل؛ با تاریخ شمسی در خروجی JSON می‌آید)\n"
+            . "/coaching — پرونده کوچینگ (دریافت پرامت آپدیت + ثبت JSON جدید)\n"
             . "/profile — حساب کاربری (نام، شناسه، تاریخ عضویت)\n"
             . "/export — خروجی JSON (با انتخاب بازه؛ فقط JSON)\n"
             . "/cancel — لغو ثبت جاری\n\n"
@@ -383,14 +449,16 @@ class DailyBotService
                 ['📊 امروز', '📅 هفته'],
                 ['📄 JSON', '🔁 روتین‌ها'],
                 ['🧠 دفترچه فکر و احساس', '📌 نکته'],
-                ['👤 حساب کاربری'],
+                ['✍️ توضیحات آزاد', '👤 حساب کاربری'],
+                ['🔄 آپدیت پرونده کوچینگ'],
             ];
         }
         return [
             ['📝 ثبت امروز', '📊 امروز'],
             ['📅 هفته', '📄 JSON'],
             ['🔁 روتین‌ها', '🧠 دفترچه فکر و احساس'],
-            ['📌 نکته', '👤 حساب کاربری'],
+            ['📌 نکته', '✍️ توضیحات آزاد'],
+            ['👤 حساب کاربری', '🔄 آپدیت پرونده کوچینگ'],
         ];
     }
 
@@ -399,8 +467,9 @@ class DailyBotService
     {
         $exportService = new ExportService();
         $entries = $exportService->getEntries($chatId, $platform);
+        $freeCount = $exportService->getFreeNotes($chatId, $platform)->count();
 
-        if ($entries->isEmpty()) {
+        if ($entries->isEmpty() && $freeCount === 0) {
             $this->api->sendMessage($chatId, "هنوز هیچ ثبتی نداری که خروجی بدم.\nبا /log شروع کن، بعد /export را بزن.");
             return;
         }
@@ -432,11 +501,16 @@ class DailyBotService
         ];
 
         $count = $entries->count();
-        $firstShamsi = \App\Helpers\ShamsiDateHelper::dateWithDay($entries->first()->entry_date);
-        $lastShamsi = \App\Helpers\ShamsiDateHelper::dateWithDay($entries->last()->entry_date);
-        $text = "📄 خروجی JSON — بازه رو انتخاب کن:\n"
-            . "کل رکوردها: {$count} ({$firstShamsi} تا {$lastShamsi})\n"
-            . "فقط JSON (بدون Excel) — تاریخ شمسی + میلادی\n"
+        $text = "📄 خروجی JSON — بازه رو انتخاب کن:\n";
+        if ($count > 0) {
+            $firstShamsi = \App\Helpers\ShamsiDateHelper::dateWithDay($entries->first()->entry_date);
+            $lastShamsi = \App\Helpers\ShamsiDateHelper::dateWithDay($entries->last()->entry_date);
+            $text .= "کل رکوردهای روزانه: {$count} ({$firstShamsi} تا {$lastShamsi})\n";
+        }
+        if ($freeCount > 0) {
+            $text .= "توضیحات آزاد: {$freeCount} مورد (با تاریخ شمسی داخل فایل می‌آید)\n";
+        }
+        $text .= "فقط JSON (بدون Excel) — تاریخ شمسی + میلادی\n"
             . "👇 یک گزینه رو بزن:";
 
         $this->api->sendMessageWithInlineKeyboard($chatId, $text, $inlineKeyboard);
@@ -508,8 +582,9 @@ class DailyBotService
         try {
             $exportService = new ExportService();
             $entries = $exportService->getEntries($chatId, $platform, $from, $to);
+            $freeNotes = $exportService->getFreeNotes($chatId, $platform, $from, $to);
 
-            if ($entries->isEmpty()) {
+            if ($entries->isEmpty() && $freeNotes->isEmpty()) {
                 $rangeTxt = $from ? " ({$from} تا {$to})" : '';
                 $this->api->sendMessage($chatId, "برای بازه «{$label}»{$rangeTxt} رکوردی پیدا نشد.");
                 return;
@@ -517,7 +592,15 @@ class DailyBotService
 
             $this->api->sendMessage($chatId, "⏳ در حال ساخت JSON برای «{$label}»...");
 
-            $jsonArray = $exportService->toArrayWithShamsi($entries);
+            // توضیحات آزاد با تاریخ شمسی داخل همان فایل JSON می‌آید (کلید free_descriptions)
+            $jsonArray = [
+                'label' => $label,
+                'from_miladi' => $from,
+                'to_miladi' => $to,
+                'exported_at_shamsi' => \App\Helpers\ShamsiDateHelper::fullDateTime(now()),
+                'daily_entries' => $exportService->toArrayWithShamsi($entries),
+                'free_descriptions' => $exportService->freeNotesToArrayWithShamsi($freeNotes),
+            ];
             $jsonContent = json_encode($jsonArray, JSON_UNESCAPED_UNICODE | JSON_PRETTY_PRINT);
             $suffix = $from ? "_{$from}_to_{$to}" : "_all";
             $jsonFileName = "mydaily-{$chatId}-{$platform}{$suffix}-" . now()->format('Y-m-d') . ".json";
@@ -526,12 +609,19 @@ class DailyBotService
             file_put_contents($jsonFilePath, $jsonContent);
 
             $shamsiCount = $entries->count();
-            $firstShamsi = \App\Helpers\ShamsiDateHelper::dateWithDay($entries->first()->entry_date);
-            $lastShamsi = \App\Helpers\ShamsiDateHelper::dateWithDay($entries->last()->entry_date);
+            $freeCount = $freeNotes->count();
+            if (!$entries->isEmpty()) {
+                $firstShamsi = \App\Helpers\ShamsiDateHelper::dateWithDay($entries->first()->entry_date);
+                $lastShamsi = \App\Helpers\ShamsiDateHelper::dateWithDay($entries->last()->entry_date);
+                $rangeLine = "بازه: {$firstShamsi} تا {$lastShamsi}\n";
+            } else {
+                $rangeLine = '';
+            }
 
             $caption = "📄 خروجی JSON — {$label}\n"
-                . "تعداد رکورد: {$shamsiCount}\n"
-                . "بازه: {$firstShamsi} تا {$lastShamsi}\n"
+                . "تعداد رکورد روزانه: {$shamsiCount}\n"
+                . "تعداد توضیحات آزاد: {$freeCount}\n"
+                . $rangeLine
                 . ($from ? "گریگوری: {$from} تا {$to}\n" : "")
                 . "فرمت: JSON شمسی+میلادی";
 
@@ -556,7 +646,7 @@ class DailyBotService
 
     private function handleUnknown(string $chatId): void
     {
-        $this->api->sendMessage($chatId, "متوجه نشدم 🤔\nبرای ثبت امروز /log و برای دیدن امروز /today را بزن. راهنما: /start\nیا /export برای خروجی JSON، و /routine برای مدیریت روتین‌ها، و /note برای نکته‌ها");
+        $this->api->sendMessage($chatId, "متوجه نشدم 🤔\nبرای ثبت امروز /log و برای دیدن امروز /today را بزن. راهنما: /start\nیا /export برای خروجی JSON، و /routine برای مدیریت روتین‌ها، و /note برای نکته‌ها، و /freenote برای توضیحات آزاد");
     }
 
     private function startLogging(string $chatId, string $platform): void
@@ -585,7 +675,7 @@ class DailyBotService
 
         $this->setState($chatId, $platform, 'waiting_sleep', ['entry_date' => $today]);
         $shamsiToday = \App\Helpers\ShamsiDateHelper::dateWithDay(Carbon::parse($today));
-        $this->api->sendMessage($chatId, "شروع می‌کنیم! 📝\n📅 {$shamsiToday} — ثبت امروز\n\n۱/۸ — ساعت خوابت کی بود؟\nمثال: 23:30 یا 6 صبح یا 7 عصر\n(برای لغو /cancel)");
+        $this->api->sendMessage($chatId, "شروع می‌کنیم! 📝\n📅 {$shamsiToday} — ثبت امروز\n\n۱/۱۰ — ساعت خوابت کی بود؟\nمثال: 23:30 یا 6 صبح یا 7 عصر\n(برای لغو /cancel)");
     }
 
     private function handleToday(string $chatId, string $platform): void
@@ -625,6 +715,10 @@ class DailyBotService
             $lines[] = "{$d} | خواب {$e->sleep_time}-{$e->wake_time} | کار {$e->work_hours}h | باشگاه {$gym} | گیم {$e->gaming_minutes}m | اجتماعی {$social} | حال {$mood}/10";
             if ($e->emotional_trigger) {
                 $lines[count($lines)-1] .= "\n  💭 {$e->emotional_trigger}";
+            }
+            if ($e->positive_trigger) {
+                $intensityTxt = $e->positive_intensity !== null ? " ({$e->positive_intensity}/10)" : "";
+                $lines[count($lines)-1] .= "\n  🌟 {$e->positive_trigger}{$intensityTxt}";
             }
             $routineTxt = $this->formatRoutineLogs($e->chat_id, $e->platform, Carbon::parse($e->entry_date)->toDateString());
             if ($routineTxt !== '') {
@@ -704,11 +798,18 @@ class DailyBotService
 
         $input = trim($input);
 
-        // Handle /skip for emotional_trigger and routine notes
-        if (($current === 'waiting_trigger' || $current === 'waiting_routine_note')
+        // Handle /skip for emotional_trigger, positive steps and routine notes
+        if (in_array($current, ['waiting_trigger', 'waiting_positive_trigger', 'waiting_positive_intensity', 'waiting_routine_note'], true)
             && ($input === '/skip' || $input === 'skip' || $input === '-')) {
             if ($current === 'waiting_trigger') {
                 $data['emotional_trigger'] = null;
+                $this->askPositiveTrigger($chatId, $platform, $data);
+            } elseif ($current === 'waiting_positive_trigger') {
+                $data['positive_trigger'] = null;
+                $data['positive_intensity'] = null;
+                $this->proceedToRoutinesOrSave($chatId, $platform, $data);
+            } elseif ($current === 'waiting_positive_intensity') {
+                $data['positive_intensity'] = null;
                 $this->proceedToRoutinesOrSave($chatId, $platform, $data);
             } else {
                 $this->handleRoutineNote($chatId, $platform, $data, null);
@@ -740,7 +841,7 @@ class DailyBotService
             $this->setState($chatId, $platform, 'waiting_sleep', $data);
             $shamsiChosen = \App\Helpers\ShamsiDateHelper::dateWithDay(Carbon::parse($data['entry_date']));
             $label = $data['entry_date'] === Carbon::today()->toDateString() ? 'ثبت امروز' : 'ثبت دیروز';
-            $this->api->sendMessage($chatId, "شروع می‌کنیم! 📝\n📅 {$shamsiChosen} — {$label}\n\n۱/۸ — ساعت خوابت کی بود؟\nمثال: 23:30 یا 6 صبح یا 7 عصر\n(برای لغو /cancel)");
+            $this->api->sendMessage($chatId, "شروع می‌کنیم! 📝\n📅 {$shamsiChosen} — {$label}\n\n۱/۱۰ — ساعت خوابت کی بود؟\nمثال: 23:30 یا 6 صبح یا 7 عصر\n(برای لغو /cancel)");
             return;
         }
 
@@ -755,7 +856,7 @@ class DailyBotService
                 $data['sleep_time'] = $parsed;
                 $this->setState($chatId, $platform, 'waiting_wake', $data);
                 $dw = $this->dayWord($data);
-                $this->api->sendMessage($chatId, "۲/۸ — ساعت بیداریت ({$dw})؟\nمثال: 07:00 یا 6 صبح");
+                $this->api->sendMessage($chatId, "۲/۱۰ — ساعت بیداریت ({$dw})؟\nمثال: 07:00 یا 6 صبح");
                 break;
 
             case 'waiting_wake':
@@ -767,7 +868,7 @@ class DailyBotService
                 $data['wake_time'] = $parsed;
                 $this->setState($chatId, $platform, 'waiting_work', $data);
                 $dw = $this->dayWord($data);
-                $this->api->sendMessage($chatId, "۳/۸ — {$dw} چند ساعت کار مفید کردی؟\nعدد بفرست مثلا: 6 یا 4.5 (بین 0 تا 16)");
+                $this->api->sendMessage($chatId, "۳/۱۰ — {$dw} چند ساعت کار مفید کردی؟\nعدد بفرست مثلا: 6 یا 4.5 (بین 0 تا 16)");
                 break;
 
             case 'waiting_work':
@@ -778,7 +879,7 @@ class DailyBotService
                 $data['work_hours'] = round((float)$input, 1);
                 $this->setState($chatId, $platform, 'waiting_gym', $data);
                 $dw = $this->dayWord($data);
-                $this->api->sendMessageWithKeyboard($chatId, "۴/۸ — {$dw} باشگاه رفتی؟", [['بله', 'خیر']]);
+                $this->api->sendMessageWithKeyboard($chatId, "۴/۱۰ — {$dw} باشگاه رفتی؟", [['بله', 'خیر']]);
                 break;
 
             case 'waiting_gym':
@@ -790,7 +891,7 @@ class DailyBotService
                 $data['gym'] = $val;
                 $this->setState($chatId, $platform, 'waiting_gaming', $data);
                 $dw = $this->dayWord($data);
-                $this->api->sendMessage($chatId, "۵/۸ — {$dw} چند دقیقه گیم زدی؟\nعدد بفرست مثلا: 45 یا 0");
+                $this->api->sendMessage($chatId, "۵/۱۰ — {$dw} چند دقیقه گیم زدی؟\nعدد بفرست مثلا: 45 یا 0");
                 break;
 
             case 'waiting_gaming':
@@ -801,7 +902,7 @@ class DailyBotService
                 $data['gaming_minutes'] = (int)$input;
                 $this->setState($chatId, $platform, 'waiting_social', $data);
                 $dw = $this->dayWord($data);
-                $this->api->sendMessageWithKeyboard($chatId, "۶/۸ — {$dw} تعامل اجتماعی داشتی؟", [['بله', 'خیر']]);
+                $this->api->sendMessageWithKeyboard($chatId, "۶/۱۰ — {$dw} تعامل اجتماعی داشتی؟", [['بله', 'خیر']]);
                 break;
 
             case 'waiting_social':
@@ -813,7 +914,7 @@ class DailyBotService
                 $data['social'] = $val;
                 $this->setState($chatId, $platform, 'waiting_mood', $data);
                 $dw = $this->dayWord($data);
-                $this->api->sendMessage($chatId, "۷/۸ — حالت {$dw} از ۱۰ چند بود؟\nعدد 1 تا 10 بفرست:");
+                $this->api->sendMessage($chatId, "۷/۱۰ — حالت {$dw} از ۱۰ چند بود؟\nعدد 1 تا 10 بفرست:");
                 break;
 
             case 'waiting_mood':
@@ -824,12 +925,33 @@ class DailyBotService
                 $data['mood'] = (int)$input;
                 $this->setState($chatId, $platform, 'waiting_trigger', $data);
                 $dw = $this->dayWord($data);
-                $this->api->sendMessage($chatId, "۸/۸ — مهم‌ترین چیزی که {$dw} حالت را تغییر داد چی بود؟\nیک جمله بنویس. اگر چیزی نبود /skip بفرست.");
+                $this->api->sendMessage($chatId, "۸/۱۰ — مهم‌ترین چیزی که {$dw} حالت را تغییر داد چی بود؟\nیک جمله بنویس. اگر چیزی نبود /skip بفرست.");
                 break;
 
             case 'waiting_trigger':
                 $data['emotional_trigger'] = mb_substr($input, 0, 500);
+                $this->askPositiveTrigger($chatId, $platform, $data);
+                break;
+
+            case 'waiting_positive_trigger':
+                $data['positive_trigger'] = mb_substr($input, 0, 500);
+                $this->setState($chatId, $platform, 'waiting_positive_intensity', $data);
+                $dw = $this->dayWord($data);
+                $this->api->sendMessage($chatId, "۱۰/۱۰ — این اتفاق خوب ({$dw}) چقدر حالت را بالا برد؟\nعدد 1 تا 10 بفرست (مثلا: 9 یا 9/10). اگر نمی‌دونی /skip بفرست.");
+                break;
+
+            case 'waiting_positive_intensity':
+                $intensity = $this->parseIntensity($input);
+                if ($intensity === null) {
+                    $this->api->sendMessage($chatId, "عدد 1 تا 10 بفرست (مثلا: 8 یا 8/10).\nاگر نمی‌خوای ثبت کنی /skip بفرست:");
+                    return;
+                }
+                $data['positive_intensity'] = $intensity;
                 $this->proceedToRoutinesOrSave($chatId, $platform, $data);
+                break;
+
+            case 'waiting_coaching_json':
+                $this->handleCoachingJsonInput($chatId, $platform, $input);
                 break;
 
             case 'waiting_routine_title':
@@ -1035,6 +1157,59 @@ class DailyBotService
                 $this->showNoteDetail($chatId, $platform, (string) $note->id);
                 break;
 
+            case 'waiting_freenote_body':
+                $body = trim($input);
+                if ($body === '') {
+                    $this->api->sendMessage($chatId, "متن خالیه 😅\nتوضیحت رو بفرست (بدون تایتل، حداکثر ۲۰۰۰ کاراکتر):");
+                    return;
+                }
+                $len = mb_strlen($body);
+                if ($len > 2000) {
+                    $over = $len - 2000;
+                    $this->api->sendMessage($chatId, "متنت {$len} کاراکتره، حداکثر ۲۰۰۰ مجازه.\n{$over} حرف کم کن و دوباره بفرست:");
+                    return;
+                }
+                $free = FreeNote::create([
+                    'chat_id' => $chatId,
+                    'platform' => $platform,
+                    'body' => $body,
+                ]);
+                $this->clearState($chatId, $platform);
+                $shamsi = \App\Helpers\ShamsiDateHelper::dateWithDay($free->created_at);
+                $this->api->sendMessageWithInlineKeyboard($chatId,
+                    "✅ توضیح آزاد ذخیره شد!\n📅 {$shamsi}\n📝 {$len}/۲۰۰۰ حرف",
+                    [
+                        [['text' => '👁 دیدن', 'callback_data' => "free:view:{$free->id}"]],
+                        [['text' => '📋 لیست توضیحات', 'callback_data' => 'free:list'], ['text' => '➕ توضیح جدید', 'callback_data' => 'free:new']],
+                        [['text' => '🏠 منوی اصلی', 'callback_data' => 'free:menu']],
+                    ]);
+                break;
+
+            case 'waiting_freenote_edit':
+                $newBody = trim($input);
+                if ($newBody === '') {
+                    $this->api->sendMessage($chatId, "متن خالیه 😅\nمتن جدید رو بفرست (حداکثر ۲۰۰۰ کاراکتر):");
+                    return;
+                }
+                $len = mb_strlen($newBody);
+                if ($len > 2000) {
+                    $over = $len - 2000;
+                    $this->api->sendMessage($chatId, "متنت {$len} کاراکتره، حداکثر ۲۰۰۰ مجازه.\n{$over} حرف کم کن و دوباره بفرست:");
+                    return;
+                }
+                $free = FreeNote::where('chat_id', $chatId)->where('platform', $platform)->where('id', (int) ($data['free_id'] ?? 0))->first();
+                if (!$free) {
+                    $this->clearState($chatId, $platform);
+                    $this->api->sendMessage($chatId, "توضیح پیدا نشد (شاید حذف شده).");
+                    $this->showFreeNotesMenu($chatId, $platform, 0);
+                    return;
+                }
+                $free->update(['body' => $newBody]);
+                $this->clearState($chatId, $platform);
+                $this->api->sendMessage($chatId, "✅ توضیح آزاد ویرایش شد ({$len}/۲۰۰۰ حرف).");
+                $this->showFreeNoteDetail($chatId, $platform, (string) $free->id);
+                break;
+
             default:
                 $this->clearState($chatId, $platform);
                 $this->api->sendMessage($chatId, "خطا در وضعیت. دوباره /log را بزن.");
@@ -1071,6 +1246,8 @@ class DailyBotService
             'social' => $data['social'] ?? false,
             'mood' => $data['mood'] ?? null,
             'emotional_trigger' => $data['emotional_trigger'] ?? null,
+            'positive_trigger' => $data['positive_trigger'] ?? null,
+            'positive_intensity' => $data['positive_intensity'] ?? null,
         ];
 
         if ($existing) {
@@ -1090,6 +1267,12 @@ class DailyBotService
         $gym = $e->gym ? 'بله ✅' : 'خیر ❌';
         $social = $e->social ? 'بله ✅' : 'خیر ❌';
         $trigger = $e->emotional_trigger ? "\n💭 محرک: {$e->emotional_trigger}" : "\n💭 محرک: —";
+        if ($e->positive_trigger) {
+            $intensityTxt = $e->positive_intensity !== null ? " (اثر {$e->positive_intensity}/10)" : "";
+            $positive = "\n🌟 عامل مثبت: {$e->positive_trigger}{$intensityTxt}";
+        } else {
+            $positive = "\n🌟 عامل مثبت: —";
+        }
         $shamsi = \App\Helpers\ShamsiDateHelper::dateWithDay($e->entry_date);
         $text = "{$title} ({$e->entry_date->format('Y-m-d')} — {$shamsi})\n"
             . "😴 خواب: {$e->sleep_time} → {$e->wake_time}\n"
@@ -1098,7 +1281,8 @@ class DailyBotService
             . "🎮 گیم: {$e->gaming_minutes} دقیقه\n"
             . "👥 اجتماعی: {$social}\n"
             . "😊 حال: {$e->mood}/10"
-            . $trigger;
+            . $trigger
+            . $positive;
 
         $routineLines = $this->formatRoutineLogs($e->chat_id, $e->platform, $e->entry_date->format('Y-m-d'));
         if ($routineLines !== '') {
@@ -1389,6 +1573,437 @@ class DailyBotService
         $this->api->sendMessage($chatId, "✏️ متن فعلی «{$note->title}» ({$len}/۱۵۰۰ حرف):\n\n{$note->body}\n\n───\nمتن جدید رو بفرست:\n(حداکثر ۱۵۰۰ کاراکتر — برای لغو /cancel)");
     }
 
+    // ── Free notes (✍️ توضیحات آزاد: بدون تایتل، با تاریخ شمسی در خروجی JSON) ──
+
+    private const FREE_PAGE_SIZE = 5;
+    private const FREE_MAX_LEN = 2000;
+
+    private function startFreeNoteWizard(string $chatId, string $platform): void
+    {
+        $this->setState($chatId, $platform, 'waiting_freenote_body', []);
+        $this->api->sendMessage($chatId, "✍️ توضیح آزاد جدید!\n\nبدون هیچ تایتل یا عنوانی — فقط متنت رو بفرست:\n(حداکثر ۲۰۰۰ حرف — تاریخ شمسی امروز بهش می‌خوره و توی خروجی JSON با همون بازه میاد)\n(برای لغو /cancel)");
+    }
+
+    private function handleFreeNoteCallback(string $chatId, string $platform, string $data): void
+    {
+        if ($data === 'free:new') {
+            $this->clearState($chatId, $platform);
+            $this->startFreeNoteWizard($chatId, $platform);
+            return;
+        }
+        if ($data === 'free:list') {
+            $this->showFreeNotesMenu($chatId, $platform, 0);
+            return;
+        }
+        if ($data === 'free:menu') {
+            $this->clearState($chatId, $platform);
+            $this->sendMainMenu($chatId, $platform);
+            return;
+        }
+        if (str_starts_with($data, 'free:page:')) {
+            $page = (int) substr($data, 10);
+            $this->showFreeNotesMenu($chatId, $platform, max(0, $page));
+            return;
+        }
+        if (str_starts_with($data, 'free:view:')) {
+            $this->showFreeNoteDetail($chatId, $platform, substr($data, 10));
+            return;
+        }
+        if (str_starts_with($data, 'free:delconf:')) {
+            $this->deleteFreeNote($chatId, $platform, substr($data, 13));
+            return;
+        }
+        if (str_starts_with($data, 'free:del:')) {
+            $this->askDeleteFreeNote($chatId, $platform, substr($data, 9));
+            return;
+        }
+        if (str_starts_with($data, 'free:edit:')) {
+            $this->startFreeNoteEdit($chatId, $platform, substr($data, 10));
+            return;
+        }
+    }
+
+    // ── Coaching profile (پرونده واحد کوچینگ — یک JSON + یک دکمه) ──
+
+    /**
+     * دکمه‌ی «🔄 آپدیت پرونده کوچینگ»: پرامت آماده را با پرونده فعلی + اطلاعات جدید می‌دهد
+     * و منتظر JSON جدید از ChatGPT می‌ماند (state = waiting_coaching_json).
+     */
+    private function showCoachingUpdate(string $chatId, string $platform): void
+    {
+        $profile = CoachingProfile::getOrCreate($chatId, $platform);
+        $profileArray = $profile->toProfileArray();
+        $profileJson = json_encode($profileArray, JSON_UNESCAPED_UNICODE | JSON_PRETTY_PRINT);
+
+        $lastSummary = '';
+        try {
+            $last = $profileArray['last_update'] ?? null;
+            if (is_array($last) && !empty($last['date'])) {
+                $lastSummary = "آخرین آپدیت: {$last['date']}"
+                    . (!empty($last['summary']) ? " — {$last['summary']}" : '');
+            }
+        } catch (\Throwable $e) {
+            $lastSummary = '';
+        }
+
+        $newInfoJson = $this->buildCoachingNewInformation($chatId, $platform, $profileArray);
+
+        $prompt = "این پرونده فعلی کوچینگ من است:\n\n"
+            . $profileJson
+            . "\n\nاطلاعات و گزارش‌های جدید من نیز در ادامه آمده‌اند:\n\n"
+            . $newInfoJson
+            . "\n\nبر اساس تمام اطلاعات قبلی و جدید، یک نسخه جدید و کامل از «پرونده کوچینگ» من تولید کن.\n\n"
+            . "قوانین:\n\n"
+            . "1. اطلاعات قبلی که هنوز معتبر هستند حفظ شوند.\n"
+            . "2. اطلاعات جدید یا تغییرکرده به‌روزرسانی شوند.\n"
+            . "3. فقط اطلاعات مهم و مؤثر در کوچینگ وارد پرونده شوند.\n"
+            . "4. اطلاعات روزمره و بی‌اهمیت وارد پرونده اصلی نشوند.\n"
+            . "5. اگر اطلاعات جدیدی درباره یک موضوع وجود ندارد، اطلاعات قبلی آن موضوع حفظ شود.\n"
+            . "6. هیچ اطلاعاتی را حدس نزن.\n"
+            . "7. واقعیت، الگوی مشاهده‌شده و فرضیه را با هم قاطی نکن.\n"
+            . "8. اهداف و برنامه‌های قدیمی که دیگر فعال نیستند حذف نشوند؛ در صورت نیاز وضعیت آنها را تغییر بده.\n"
+            . "9. جزئیات کامل گزارش‌های روزانه و CBT را داخل پرونده کپی نکن؛ فقط نتیجه و الگوهای مهم آنها را نگه دار.\n"
+            . "10. پرونده باید خلاصه، خوانا و مناسب استفاده در گفتگوهای آینده باشد.\n"
+            . "11. ساختار JSON همان ساختار پرونده فعلی باقی بماند.\n"
+            . "12. تاریخ و خلاصه تغییرات آخرین به‌روزرسانی را نیز اصلاح کن.\n\n"
+            . "فقط JSON نهایی را بده.\n"
+            . "هیچ توضیح، مقدمه، markdown یا متن دیگری خارج از JSON ننویس.";
+
+        $intro = "🔄 آپدیت پرونده کوچینگ\n\n"
+            . "روش کار (۳ قدم):\n"
+            . "۱️⃣ پرامتی که الان می‌فرستم را کپی کن و در ChatGPT بفرست.\n"
+            . "۲️⃣ فقط JSON ای که ChatGPT داد را همین‌جا برایم بفرست (متن خالی، بدون توضیح).\n"
+            . "۳️⃣ من آن را به‌عنوان نسخه جدید پرونده ذخیره می‌کنم.\n"
+            . ($lastSummary !== '' ? "\n{$lastSummary}\n" : "\n")
+            . "\nپرامت آماده (کپی کن):\n(برای لغو /cancel)";
+
+        $this->setState($chatId, $platform, 'waiting_coaching_json', []);
+        $this->api->sendMessage($chatId, $intro);
+        $this->sendLongMessage($chatId, $prompt);
+        $this->api->sendMessage($chatId, "👆 پرامت بالا را در ChatGPT بفرست، بعد فقط JSON نهایی را همین‌جا بفرست تا ذخیره کنم.\n(برای لغو /cancel)");
+    }
+
+    /**
+     * اطلاعات جدید برای پرامت: گزارش‌های روزانه + CBT + نکته‌ها + توضیحات آزاد
+     * از آخرین آپدیت به بعد (اگر تاریخی نبود: ۱۴ روز اخیر). فشرده و محدود تا پرامت قابل‌کپی بماند.
+     */
+    private function buildCoachingNewInformation(string $chatId, string $platform, array $profileArray): string
+    {
+        $since = null;
+        try {
+            $last = $profileArray['last_update'] ?? null;
+            if (is_array($last) && !empty($last['date']) && preg_match('/^\d{4}-\d{2}-\d{2}$/', (string) $last['date'])) {
+                $since = (string) $last['date'];
+            }
+        } catch (\Throwable $e) {
+            $since = null;
+        }
+        if ($since === null) {
+            $since = Carbon::today()->subDays(14)->toDateString();
+        }
+
+        $info = ['since' => $since];
+
+        // گزارش‌های روزانه (حداکثر ۱۴ مورد آخر، فشرده)
+        try {
+            $entries = DailyEntry::where('chat_id', $chatId)
+                ->where('platform', $platform)
+                ->whereDate('entry_date', '>=', $since)
+                ->orderBy('entry_date', 'desc')
+                ->take(14)
+                ->get()
+                ->reverse()
+                ->values();
+            $info['daily_reports'] = $entries->map(function (DailyEntry $e) {
+                $row = [
+                    'date' => Carbon::parse($e->entry_date)->toDateString(),
+                    'mood' => $e->mood !== null ? (int) $e->mood : null,
+                ];
+                if ($e->sleep_time) $row['sleep'] = $e->sleep_time;
+                if ($e->wake_time) $row['wake'] = $e->wake_time;
+                if ($e->work_hours !== null) $row['work_hours'] = (float) $e->work_hours;
+                if ($e->gym !== null) $row['gym'] = (bool) $e->gym;
+                if ($e->gaming_minutes !== null) $row['gaming_minutes'] = (int) $e->gaming_minutes;
+                if ($e->social !== null) $row['social'] = (bool) $e->social;
+                if ($e->emotional_trigger) $row['trigger'] = mb_substr((string) $e->emotional_trigger, 0, 200);
+                if ($e->positive_trigger) {
+                    $row['positive'] = mb_substr((string) $e->positive_trigger, 0, 200);
+                    if ($e->positive_intensity !== null) $row['positive_intensity'] = (int) $e->positive_intensity;
+                }
+                return $row;
+            })->toArray();
+        } catch (\Throwable $e) {
+            $info['daily_reports'] = [];
+        }
+
+        // رکوردهای CBT جدید (خلاصه، حداکثر ۱۰ مورد)
+        try {
+            $cbtRows = \App\Models\CbtRecord::where('chat_id', $chatId)
+                ->where('platform', $platform)
+                ->orderByDesc('id')
+                ->take(10)
+                ->get();
+            $info['cbt_recent'] = $cbtRows->map(function ($r) {
+                return [
+                    'date' => $r->date_shamsi ?? null,
+                    'event' => isset($r->event) ? mb_substr((string) $r->event, 0, 200) : null,
+                    'thought' => isset($r->thought) ? mb_substr((string) $r->thought, 0, 200) : null,
+                    'feeling' => $r->feeling ?? null,
+                    'score_feeling' => $r->score_feeling ?? null,
+                    'score_feeling_after' => $r->score_feeling_after ?? null,
+                ];
+            })->toArray();
+        } catch (\Throwable $e) {
+            $info['cbt_recent'] = [];
+        }
+
+        // نکته‌ها و توضیحات آزاد جدید (خلاصه، حداکثر ۱۰ مورد از هر کدام)
+        try {
+            $info['notes_recent'] = Note::where('chat_id', $chatId)
+                ->where('platform', $platform)
+                ->orderByDesc('id')
+                ->take(10)
+                ->get()
+                ->map(fn (Note $n) => [
+                    'title' => $n->title,
+                    'body' => mb_substr((string) $n->body, 0, 200),
+                ])->toArray();
+        } catch (\Throwable $e) {
+            $info['notes_recent'] = [];
+        }
+        try {
+            $info['free_notes_recent'] = FreeNote::where('chat_id', $chatId)
+                ->where('platform', $platform)
+                ->orderByDesc('id')
+                ->take(10)
+                ->get()
+                ->map(fn (FreeNote $n) => mb_substr((string) $n->body, 0, 200))->toArray();
+        } catch (\Throwable $e) {
+            $info['free_notes_recent'] = [];
+        }
+
+        $json = json_encode($info, JSON_UNESCAPED_UNICODE | JSON_PRETTY_PRINT);
+        return $json === false ? '{}' : (string) $json;
+    }
+
+    /**
+     * دریافت JSON جدید از کاربر و ذخیره به‌عنوان نسخه جدید پرونده.
+     */
+    private function handleCoachingJsonInput(string $chatId, string $platform, string $input): void
+    {
+        $candidate = trim($input);
+
+        // حذف فنس markdown اگر ChatGPT با ```json داده باشد
+        if (preg_match('/```(?:json)?\s*([\s\S]*?)\s*```/u', $candidate, $m)) {
+            $candidate = trim($m[1]);
+        }
+
+        if ($candidate === '') {
+            $this->api->sendMessage($chatId, "چیزی دریافت نکردم 😅\nفقط JSON نهایی ChatGPT را بفرست (متن خالی).\n(برای لغو /cancel)");
+            return;
+        }
+
+        try {
+            $decoded = json_decode($candidate, true, 512, JSON_THROW_ON_ERROR);
+        } catch (\Throwable $e) {
+            $this->api->sendMessage($chatId, "این متن JSON معتبر نیست ❌\nخطا: " . $e->getMessage() . "\n\nلطفا فقط JSON نهایی را بفرست (بدون توضیح اضافه). اگر داخل ``` است، همان را کامل کپی کن.\n(برای لغو /cancel)");
+            return;
+        }
+
+        if (!is_array($decoded)) {
+            $this->api->sendMessage($chatId, "ساختار JSON درست نیست ❌\nJSON باید یک آبجکت (پرونده کوچینگ) باشد، نه لیست یا متن.\nدوباره بفرست. (برای لغو /cancel)");
+            return;
+        }
+
+        // اعتبارسنجی حداقلی: حداقل ۲ کلید از کلیدهای مورد انتظار + ساختار آبجکتی
+        $expected = CoachingProfile::expectedKeys();
+        $hits = 0;
+        foreach ($expected as $key) {
+            if (array_key_exists($key, $decoded)) $hits++;
+        }
+        if ($hits < 2) {
+            $this->api->sendMessage($chatId, "این JSON شبیه پرونده کوچینگ نیست ❌\nباید همان ساختار پرونده فعلی را داشته باشد (بخش‌هایی مثل goals ،current_state ،strategy و last_update).\nخروجی ChatGPT را کامل کپی کن و بفرست. (برای لغو /cancel)");
+            return;
+        }
+
+        $pretty = json_encode($decoded, JSON_UNESCAPED_UNICODE | JSON_PRETTY_PRINT);
+        if ($pretty === false) {
+            $this->api->sendMessage($chatId, "خطا در ذخیره‌سازی ❌\nدوباره تلاش کن. (برای لغو /cancel)");
+            return;
+        }
+
+        CoachingProfile::updateOrCreate(
+            ['chat_id' => $chatId, 'platform' => $platform],
+            ['profile_json' => $pretty]
+        );
+        $this->clearState($chatId, $platform);
+
+        $summary = '';
+        try {
+            $last = $decoded['last_update'] ?? null;
+            if (is_array($last) && !empty($last['summary'])) {
+                $summary = "\n📝 خلاصه تغییرات: " . mb_substr((string) $last['summary'], 0, 300);
+            } elseif (is_array($last) && !empty($last['date'])) {
+                $summary = "\n📅 تاریخ آپدیت: " . (string) $last['date'];
+            }
+        } catch (\Throwable $e) {
+            $summary = '';
+        }
+
+        $this->api->sendMessageWithKeyboard($chatId,
+            "✅ پرونده کوچینگ به‌روز شد!{$summary}\n\nبا «🔄 آپدیت پرونده کوچینگ» هر وقت خواستی دوباره آپدیت بگیر.",
+            $this->mainMenuKeyboard($chatId, $platform));
+    }
+
+    /**
+     * ارسال پیام طولانی با تکه‌تکه کردن روی مرز خطوط (سقف تلگرام ~۴۰۹۶ کاراکتر).
+     */
+    private function sendLongMessage(string $chatId, string $text, int $chunkSize = 3500): void
+    {
+        $text = trim($text);
+        if ($text === '') return;
+        if (mb_strlen($text) <= $chunkSize) {
+            $this->api->sendMessage($chatId, $text);
+            return;
+        }
+        $lines = preg_split('/\n/', $text) ?: [$text];
+        $buf = '';
+        foreach ($lines as $line) {
+            $next = $buf === '' ? $line : $buf . "\n" . $line;
+            if (mb_strlen($next) > $chunkSize && $buf !== '') {
+                $this->api->sendMessage($chatId, $buf);
+                $buf = $line;
+            } else {
+                $buf = $next;
+            }
+        }
+        if (trim($buf) !== '') {
+            $this->api->sendMessage($chatId, $buf);
+        }
+    }
+
+    /** لیست توضیحات آزاد + دکمه ساخت جدید — با صفحه‌بندی قبل/بعد. */
+    private function showFreeNotesMenu(string $chatId, string $platform, int $page = 0): void
+    {        $this->clearState($chatId, $platform);
+
+        $total = FreeNote::where('chat_id', $chatId)->where('platform', $platform)->count();
+
+        if ($total === 0) {
+            $this->api->sendMessageWithInlineKeyboard($chatId,
+                "✍️ توضیحات آزاد\n\nهنوز توضیحی نداری.\nبدون تایتل، فقط متنت رو بفرست تا با تاریخ شمسی ذخیره کنم — توی خروجی JSON هم با همون بازه‌ی زمانی میاد.",
+                [
+                    [['text' => '➕ توضیح جدید', 'callback_data' => 'free:new']],
+                    [['text' => '🏠 منوی اصلی', 'callback_data' => 'free:menu']],
+                ]);
+            return;
+        }
+
+        $perPage = self::FREE_PAGE_SIZE;
+        $totalPages = (int) ceil($total / $perPage);
+        $page = max(0, min($page, $totalPages - 1));
+
+        $notes = FreeNote::where('chat_id', $chatId)
+            ->where('platform', $platform)
+            ->orderByDesc('id')
+            ->skip($page * $perPage)
+            ->take($perPage)
+            ->get();
+
+        $lines = ["✍️ توضیحات آزاد ({$total} مورد) — صفحه " . ($page + 1) . " از {$totalPages}:\n"];
+        $keyboard = [];
+        foreach ($notes as $n) {
+            $shamsi = \App\Helpers\ShamsiDateHelper::dateWithDay($n->created_at);
+            $len = mb_strlen((string) $n->body);
+            $preview = mb_substr((string) $n->body, 0, 40);
+            if (mb_strlen((string) $n->body) > 40) $preview .= '…';
+            $lines[] = "• {$shamsi} ({$len} حرف)\n  {$preview}";
+            $short = mb_substr((string) $n->body, 0, 20);
+            $keyboard[] = [['text' => "✍️ {$short}", 'callback_data' => "free:view:{$n->id}"]];
+        }
+
+        $lines[] = "\nبرای دیدن متن کامل روی هر مورد بزن.";
+
+        $keyboard[] = [['text' => '➕ توضیح جدید', 'callback_data' => 'free:new']];
+        if ($totalPages > 1) {
+            $nav = [];
+            if ($page > 0) $nav[] = ['text' => '◀ قبلی', 'callback_data' => 'free:page:' . ($page - 1)];
+            if ($page < $totalPages - 1) $nav[] = ['text' => 'بعدی ▶', 'callback_data' => 'free:page:' . ($page + 1)];
+            if (!empty($nav)) $keyboard[] = $nav;
+        }
+        $keyboard[] = [['text' => '🏠 منوی اصلی', 'callback_data' => 'free:menu']];
+
+        $this->api->sendMessageWithInlineKeyboard($chatId, implode("\n", $lines), $keyboard);
+    }
+
+    /** نمایش یک توضیح آزاد با متن کامل + تاریخ شمسی ایجاد. */
+    private function showFreeNoteDetail(string $chatId, string $platform, string $id): void
+    {
+        if (!ctype_digit($id)) {
+            $this->showFreeNotesMenu($chatId, $platform, 0);
+            return;
+        }
+        $note = FreeNote::where('chat_id', $chatId)->where('platform', $platform)->where('id', (int) $id)->first();
+        if (!$note) {
+            $this->api->sendMessage($chatId, "توضیحی با این مشخصات پیدا نکردم.");
+            $this->showFreeNotesMenu($chatId, $platform, 0);
+            return;
+        }
+        $shamsi = \App\Helpers\ShamsiDateHelper::dateWithDay($note->created_at);
+        $len = mb_strlen((string) $note->body);
+        $text = "✍️ توضیح آزاد\n📅 {$shamsi}\n📝 {$len}/۲۰۰۰ حرف\n\n{$note->body}";
+
+        $this->api->sendMessageWithInlineKeyboard($chatId, $text, [
+            [['text' => '✏️ ویرایش', 'callback_data' => "free:edit:{$note->id}"], ['text' => '🗑 حذف', 'callback_data' => "free:del:{$note->id}"]],
+            [['text' => '📋 لیست توضیحات', 'callback_data' => 'free:list'], ['text' => '➕ جدید', 'callback_data' => 'free:new']],
+            [['text' => '🏠 منوی اصلی', 'callback_data' => 'free:menu']],
+        ]);
+    }
+
+    private function askDeleteFreeNote(string $chatId, string $platform, string $id): void
+    {
+        $note = FreeNote::where('chat_id', $chatId)->where('platform', $platform)->where('id', (int) $id)->first();
+        if (!$note) {
+            $this->showFreeNotesMenu($chatId, $platform, 0);
+            return;
+        }
+        $preview = mb_substr((string) $note->body, 0, 60);
+        $this->api->sendMessageWithInlineKeyboard($chatId,
+            "🗑 این توضیح حذف بشه؟\n«{$preview}…»",
+            [
+                [['text' => '✅ بله، حذف کن', 'callback_data' => "free:delconf:{$note->id}"], ['text' => '↩ انصراف', 'callback_data' => "free:view:{$note->id}"]],
+            ]);
+    }
+
+    private function deleteFreeNote(string $chatId, string $platform, string $id): void
+    {
+        $note = FreeNote::where('chat_id', $chatId)->where('platform', $platform)->where('id', (int) $id)->first();
+        if (!$note) {
+            $this->showFreeNotesMenu($chatId, $platform, 0);
+            return;
+        }
+        $note->delete();
+        $this->api->sendMessage($chatId, "🗑 توضیح آزاد حذف شد.");
+        $this->showFreeNotesMenu($chatId, $platform, 0);
+    }
+
+    /** شروع ویرایش توضیح آزاد — سقف ۲۰۰۰ کاراکتر مثل ساخت. */
+    private function startFreeNoteEdit(string $chatId, string $platform, string $id): void
+    {
+        if (!ctype_digit($id)) {
+            $this->showFreeNotesMenu($chatId, $platform, 0);
+            return;
+        }
+        $note = FreeNote::where('chat_id', $chatId)->where('platform', $platform)->where('id', (int) $id)->first();
+        if (!$note) {
+            $this->api->sendMessage($chatId, "توضیحی با این مشخصات پیدا نکردم.");
+            $this->showFreeNotesMenu($chatId, $platform, 0);
+            return;
+        }
+        $len = mb_strlen((string) $note->body);
+        $this->setState($chatId, $platform, 'waiting_freenote_edit', ['free_id' => $note->id]);
+        $this->api->sendMessage($chatId, "✏️ متن فعلی ({$len}/۲۰۰۰ حرف):\n\n{$note->body}\n\n───\nمتن جدید رو بفرست:\n(حداکثر ۲۰۰۰ کاراکتر — برای لغو /cancel)");
+    }
+
     /** ساخت نهایی روتین در انتهای ویزارد — $remindAt به وقت تهران (HH:MM) یا null؛ $silent = سایلنت (بدون صدا). */
     private function finishRoutineWizard(string $chatId, string $platform, array $data, ?string $remindAt, bool $silent = false): void
     {
@@ -1440,6 +2055,28 @@ class DailyBotService
     }
 
     /** بعد از آخرین سوال گزارش: اگر روتین فعال هست، وارد سوال‌های روتین شو وگرنه ذخیره کن. */
+    private function askPositiveTrigger(string $chatId, string $platform, array $data): void
+    {
+        $this->setState($chatId, $platform, 'waiting_positive_trigger', $data);
+        $dw = $this->dayWord($data);
+        $this->api->sendMessage($chatId, "۹/۱۰ — 🌟 چه چیزی {$dw} حالت را بالا برد؟\nیک جمله بنویس (مثلا: دیت خوب، صحبت با دوستم).\nاگر اتفاق مثبتی نبود /skip بفرست.");
+    }
+
+    /** شدت اثر عامل مثبت: «9»، «9/10»، «9 از 10»، ارقام فارسی هم قبول است. خروجی 1-10 یا null. */
+    private function parseIntensity(string $input): ?int
+    {
+        $fa = str_replace(
+            ['۰','۱','۲','۳','۴','۵','۶','۷','۸','۹','٠','١','٢','٣','٤','٥','٦','٧','٨','٩'],
+            ['0','1','2','3','4','5','6','7','8','9'],
+            trim($input)
+        );
+        if (preg_match('/(\d{1,2})/', $fa, $m)) {
+            $n = (int) $m[1];
+            if ($n >= 1 && $n <= 10) return $n;
+        }
+        return null;
+    }
+
     private function proceedToRoutinesOrSave(string $chatId, string $platform, array $data): void
     {
         $targetDate = $data['entry_date'] ?? Carbon::today()->toDateString();
@@ -1749,6 +2386,6 @@ class DailyBotService
         $this->setState($chatId, $platform, 'waiting_sleep', ['entry_date' => $dateYmd]);
         $shamsi = \App\Helpers\ShamsiDateHelper::dateWithDay(Carbon::parse($dateYmd));
         $label = $dateYmd === Carbon::today()->toDateString() ? 'ثبت امروز' : ($dateYmd === Carbon::yesterday()->toDateString() ? 'ثبت دیروز' : "ثبت {$shamsi}");
-        $this->api->sendMessage($chatId, "شروع می‌کنیم! 📝\n📅 {$shamsi} — {$label}\n\n۱/۸ — ساعت خوابت کی بود؟\nمثال: 23:30 یا 6 صبح یا 7 عصر\n(برای لغو /cancel)");
+        $this->api->sendMessage($chatId, "شروع می‌کنیم! 📝\n📅 {$shamsi} — {$label}\n\n۱/۱۰ — ساعت خوابت کی بود؟\nمثال: 23:30 یا 6 صبح یا 7 عصر\n(برای لغو /cancel)");
     }
 }

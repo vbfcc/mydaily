@@ -4,6 +4,7 @@ namespace App\Services;
 
 use App\Helpers\ShamsiDateHelper;
 use App\Models\DailyEntry;
+use App\Models\FreeNote;
 use Carbon\Carbon;
 use Illuminate\Support\Collection;
 use PhpOffice\PhpSpreadsheet\Spreadsheet;
@@ -30,6 +31,43 @@ class ExportService
         }
 
         return $q->get();
+    }
+
+    /**
+     * Get free descriptions (توضیحات آزاد — بدون تایتل) for a chat, optionally filtered by date range.
+     * Range filter uses DATE(created_at) so a free note falls in the same بازه as daily entries.
+     */
+    public function getFreeNotes(string $chatId, string $platform, ?string $from = null, ?string $to = null): Collection
+    {
+        $q = FreeNote::where('chat_id', $chatId)
+            ->where('platform', $platform)
+            ->orderBy('created_at', 'asc');
+
+        if ($from) {
+            $q->whereDate('created_at', '>=', $from);
+        }
+        if ($to) {
+            $q->whereDate('created_at', '<=', $to);
+        }
+
+        return $q->get();
+    }
+
+    /**
+     * Convert free notes to AI-readable array with Shamsi dates.
+     */
+    public function freeNotesToArrayWithShamsi(Collection $notes): array
+    {
+        return $notes->map(function (FreeNote $n) {
+            return [
+                'id' => $n->id,
+                'text' => $n->body,
+                'created_at' => $n->created_at ? $n->created_at->toIso8601String() : null,
+                'created_at_shamsi' => $n->created_at ? ShamsiDateHelper::dateOnly($n->created_at) : null,
+                'created_at_shamsi_with_day' => $n->created_at ? ShamsiDateHelper::dateWithDay($n->created_at) : null,
+                'created_at_shamsi_datetime' => $n->created_at ? ShamsiDateHelper::fullDateTime($n->created_at) : null,
+            ];
+        })->toArray();
     }
 
     /**
@@ -67,6 +105,8 @@ class ExportService
                 'social_bool' => (bool)$e->social,
                 'mood' => $e->mood !== null ? (int)$e->mood : null,
                 'emotional_trigger' => $e->emotional_trigger,
+                'positive_trigger' => $e->positive_trigger,
+                'positive_intensity' => $e->positive_intensity !== null ? (int)$e->positive_intensity : null,
                 'routines' => $this->routineLogsFor($e),
                 'created_at' => $e->created_at ? $e->created_at->toIso8601String() : null,
                 'created_at_shamsi' => $e->created_at ? ShamsiDateHelper::fullDateTime($e->created_at) : null,
@@ -115,13 +155,15 @@ class ExportService
             'تعامل اجتماعی',
             'حال (۱-۱۰)',
             'محرک احساسی',
+            'عامل مثبت',
+            'شدت اثر مثبت (۱-۱۰)',
             'پلتفرم',
             'چت آی‌دی',
         ];
 
         // Header row style
         $sheet->fromArray($headers, null, 'A1');
-        $headerStyle = $sheet->getStyle('A1:M1');
+        $headerStyle = $sheet->getStyle('A1:O1');
         $headerStyle->getFont()->setBold(true)->setColor(new \PhpOffice\PhpSpreadsheet\Style\Color('FFFFFFFF'));
         $headerStyle->getFill()->setFillType(Fill::FILL_SOLID)->getStartColor()->setARGB('FF4A5568');
         $headerStyle->getAlignment()->setHorizontal(Alignment::HORIZONTAL_CENTER)->setVertical(Alignment::VERTICAL_CENTER);
@@ -141,19 +183,22 @@ class ExportService
             $sheet->setCellValue("I{$row}", $e->social ? 'بله' : 'خیر');
             $sheet->setCellValue("J{$row}", $e->mood !== null ? (int)$e->mood : '-');
             $sheet->setCellValue("K{$row}", $e->emotional_trigger ?? '-');
-            $sheet->setCellValue("L{$row}", $e->platform);
-            $sheet->setCellValue("M{$row}", $e->chat_id);
+            $sheet->setCellValue("L{$row}", $e->positive_trigger ?? '-');
+            $sheet->setCellValue("M{$row}", $e->positive_intensity !== null ? (int)$e->positive_intensity : '-');
+            $sheet->setCellValue("N{$row}", $e->platform);
+            $sheet->setCellValue("O{$row}", $e->chat_id);
             // Center align numeric columns
             $sheet->getStyle("F{$row}:J{$row}")->getAlignment()->setHorizontal(Alignment::HORIZONTAL_CENTER);
             $row++;
         }
 
         // Auto-size columns
-        foreach (range('A', 'M') as $col) {
+        foreach (range('A', 'O') as $col) {
             $sheet->getColumnDimension($col)->setAutoSize(true);
         }
         // Make trigger column wider
         $sheet->getColumnDimension('K')->setWidth(35);
+        $sheet->getColumnDimension('L')->setWidth(35);
         $sheet->getColumnDimension('B')->setWidth(28);
 
         // Borders
@@ -167,12 +212,12 @@ class ExportService
                     ],
                 ],
             ];
-            $sheet->getStyle("A1:M{$lastRow}")->applyFromArray($styleArray);
+            $sheet->getStyle("A1:O{$lastRow}")->applyFromArray($styleArray);
         }
 
         // Freeze header
         $sheet->freezePane('A2');
-        $sheet->setAutoFilter("A1:M{$lastRow}");
+        $sheet->setAutoFilter("A1:O{$lastRow}");
 
         $writer = new Xlsx($spreadsheet);
         $dir = dirname($filePath);
@@ -187,7 +232,7 @@ class ExportService
      */
     public function generateCsv(Collection $entries): string
     {
-        $headers = ['تاریخ شمسی','روز هفته','تاریخ میلادی','ساعت خواب','ساعت بیداری','کار مفید (ساعت)','باشگاه','گیم (دقیقه)','تعامل اجتماعی','حال (۱-۱۰)','محرک احساسی','پلتفرم','چت آی‌دی'];
+        $headers = ['تاریخ شمسی','روز هفته','تاریخ میلادی','ساعت خواب','ساعت بیداری','کار مفید (ساعت)','باشگاه','گیم (دقیقه)','تعامل اجتماعی','حال (۱-۱۰)','محرک احساسی','عامل مثبت','شدت اثر مثبت (۱-۱۰)','پلتفرم','چت آی‌دی'];
         $lines = [];
         $lines[] = implode(',', array_map(fn($h) => '"' . str_replace('"','""',$h) . '"', $headers));
         foreach ($entries as $e) {
@@ -203,6 +248,8 @@ class ExportService
                 $e->social ? 'بله' : 'خیر',
                 $e->mood !== null ? (string)(int)$e->mood : '-',
                 $e->emotional_trigger ?? '-',
+                $e->positive_trigger ?? '-',
+                $e->positive_intensity !== null ? (string)(int)$e->positive_intensity : '-',
                 $e->platform,
                 $e->chat_id,
             ];
