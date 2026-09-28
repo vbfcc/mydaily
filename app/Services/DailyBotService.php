@@ -96,6 +96,15 @@ class DailyBotService
             || $text === '/coach';
     }
 
+    private function isCoachingGetText(string $text): bool
+    {
+        return $text === '📥 دریافت پرونده کوچینگ'
+            || $text === 'دریافت پرونده کوچینگ'
+            || $text === 'دریافت پرونده'
+            || $text === '/coaching_get'
+            || $text === '/get_coaching';
+    }
+
     // ── Public entry point for every incoming message ──
 
     public function handle(string $chatId, string $platform, string $text, ?string $username = null): void
@@ -115,7 +124,7 @@ class DailyBotService
             }
             // Allow hard commands to interrupt CBT flow
             $isDirectDayBtn = str_starts_with($text, '📝 دیروز') || str_starts_with($text, '📝 امروز') || $text === 'دیروز' || $text === 'امروز';
-            if (in_array($text, ['/start', '/today', '/week', '/log', '/export', '/help', '/routine', '/routines', '🔁 روتین‌ها', '/profile', '👤 حساب کاربری', '👤 پروفایل', '🧠 دفترچه فکر و احساس', '/cbt', '/thought', '/fekr', '📌 نکته', 'نکته', '/note', '/notes', '/nokte', '✍️ توضیحات آزاد', 'توضیحات آزاد', '/freenote', '/free', '/azad', '/desc', '🔄 آپدیت پرونده کوچینگ', '/coaching', '/coach']) || $isDirectDayBtn || $this->isCbtText($text) || $this->isNoteText($text) || $this->isFreeNoteText($text) || $this->isCoachingText($text)) {
+            if (in_array($text, ['/start', '/today', '/week', '/log', '/export', '/help', '/routine', '/routines', '🔁 روتین‌ها', '/profile', '👤 حساب کاربری', '👤 پروفایل', '🧠 دفترچه فکر و احساس', '/cbt', '/thought', '/fekr', '📌 نکته', 'نکته', '/note', '/notes', '/nokte', '✍️ توضیحات آزاد', 'توضیحات آزاد', '/freenote', '/free', '/azad', '/desc', '🔄 آپدیت پرونده کوچینگ', '/coaching', '/coach', '📥 دریافت پرونده کوچینگ', '/coaching_get', '/get_coaching']) || $isDirectDayBtn || $this->isCbtText($text) || $this->isNoteText($text) || $this->isFreeNoteText($text) || $this->isCoachingText($text) || $this->isCoachingGetText($text)) {
                 $cbt->clear($chatId, $platform);
                 // fall through to normal handling (also clear BotState if needed below)
                 $this->clearState($chatId, $platform);
@@ -150,7 +159,7 @@ class DailyBotService
         // If in a flow, handle step input before checking other commands
         if ($state && $state->state !== null) {
             // Allow /start /today /week /export /routine /note /freenote /coaching + direct day buttons + CBT to interrupt flow
-            if (in_array($text, ['/start', '/today', '/week', '/log', '/export', '/help', '/routine', '/routines', '🔁 روتین‌ها', '/profile', '👤 حساب کاربری', '🧠 دفترچه فکر و احساس', '/cbt', '📌 نکته', 'نکته', '/note', '/notes', '/nokte', '✍️ توضیحات آزاد', 'توضیحات آزاد', '/freenote', '/free', '/azad', '/desc', '🔄 آپدیت پرونده کوچینگ', '/coaching', '/coach']) || $isDirectDayBtn || $this->isCbtText($text) || $this->isNoteText($text) || $this->isFreeNoteText($text) || $this->isCoachingText($text)) {
+            if (in_array($text, ['/start', '/today', '/week', '/log', '/export', '/help', '/routine', '/routines', '🔁 روتین‌ها', '/profile', '👤 حساب کاربری', '🧠 دفترچه فکر و احساس', '/cbt', '📌 نکته', 'نکته', '/note', '/notes', '/nokte', '✍️ توضیحات آزاد', 'توضیحات آزاد', '/freenote', '/free', '/azad', '/desc', '🔄 آپدیت پرونده کوچینگ', '/coaching', '/coach', '📥 دریافت پرونده کوچینگ', '/coaching_get', '/get_coaching']) || $isDirectDayBtn || $this->isCbtText($text) || $this->isNoteText($text) || $this->isFreeNoteText($text) || $this->isCoachingText($text) || $this->isCoachingGetText($text)) {
                 $this->clearState($chatId, $platform);
                 // fall through to command handling below
             } else {
@@ -210,6 +219,12 @@ class DailyBotService
             return;
         }
 
+        if ($this->isCoachingGetText($text)) {
+            if ($state && $state->state !== null) $this->clearState($chatId, $platform);
+            $this->showCoachingFile($chatId, $platform);
+            return;
+        }
+
         if ($text === '/profile' || $text === '👤 حساب کاربری' || $text === '👤 پروفایل') {
             $this->handleProfile($chatId, $platform);
             return;
@@ -253,6 +268,11 @@ class DailyBotService
             return;
         }
 
+        if ($this->isCoachingGetText($text)) {
+            $this->showCoachingFile($chatId, $platform);
+            return;
+        }
+
         match (true) {
             $text === '/start' => $this->handleStart($chatId, $platform),
             $text === '/log' => $this->startLogging($chatId, $platform),
@@ -286,6 +306,9 @@ class DailyBotService
             $text === '🔄 آپدیت پرونده کوچینگ' => $this->showCoachingUpdate($chatId, $platform),
             $text === '/coaching' => $this->showCoachingUpdate($chatId, $platform),
             $text === '/coach' => $this->showCoachingUpdate($chatId, $platform),
+            $text === '📥 دریافت پرونده کوچینگ' => $this->showCoachingFile($chatId, $platform),
+            $text === '/coaching_get' => $this->showCoachingFile($chatId, $platform),
+            $text === '/get_coaching' => $this->showCoachingFile($chatId, $platform),
             default => $this->handleUnknown($chatId),
         };
     }
@@ -384,6 +407,7 @@ class DailyBotService
             . "/note — نکته‌ها (یادداشت با اسم، متن تا ۱۵۰۰ حرف)\n"
             . "/freenote — توضیحات آزاد (بدون تایتل؛ با تاریخ شمسی در خروجی JSON می‌آید)\n"
             . "/coaching — پرونده کوچینگ (دریافت پرامت آپدیت + ثبت JSON جدید)\n"
+            . "/coaching_get — دریافت متن فعلی پرونده کوچینگ\n"
             . "/profile — حساب کاربری (نام، شناسه، تاریخ عضویت)\n"
             . "/export — خروجی JSON (با انتخاب بازه؛ فقط JSON)\n"
             . "/cancel — لغو ثبت جاری\n\n"
@@ -450,7 +474,7 @@ class DailyBotService
                 ['📄 JSON', '🔁 روتین‌ها'],
                 ['🧠 دفترچه فکر و احساس', '📌 نکته'],
                 ['✍️ توضیحات آزاد', '👤 حساب کاربری'],
-                ['🔄 آپدیت پرونده کوچینگ'],
+                ['📥 دریافت پرونده کوچینگ', '🔄 آپدیت پرونده کوچینگ'],
             ];
         }
         return [
@@ -458,7 +482,8 @@ class DailyBotService
             ['📅 هفته', '📄 JSON'],
             ['🔁 روتین‌ها', '🧠 دفترچه فکر و احساس'],
             ['📌 نکته', '✍️ توضیحات آزاد'],
-            ['👤 حساب کاربری', '🔄 آپدیت پرونده کوچینگ'],
+            ['👤 حساب کاربری'],
+            ['📥 دریافت پرونده کوچینگ', '🔄 آپدیت پرونده کوچینگ'],
         ];
     }
 
@@ -1623,7 +1648,37 @@ class DailyBotService
         }
     }
 
-    // ── Coaching profile (پرونده واحد کوچینگ — یک JSON + یک دکمه) ──
+    // ── Coaching profile (پرونده واحد کوچینگ — دریافت + آپدیت) ──
+
+    /**
+     * دکمه‌ی «📥 دریافت پرونده کوچینگ»: متن فعلی پرونده را می‌دهد (بدون شروع فلو آپدیت).
+     */
+    private function showCoachingFile(string $chatId, string $platform): void
+    {
+        $profile = CoachingProfile::getOrCreate($chatId, $platform);
+        $profileArray = $profile->toProfileArray();
+        $profileJson = json_encode($profileArray, JSON_UNESCAPED_UNICODE | JSON_PRETTY_PRINT);
+
+        $lastSummary = '';
+        try {
+            $last = $profileArray['last_update'] ?? null;
+            if (is_array($last) && !empty($last['date'])) {
+                $lastSummary = "آخرین آپدیت: {$last['date']}"
+                    . (!empty($last['summary']) ? " — {$last['summary']}" : '');
+            }
+        } catch (\Throwable $e) {
+            $lastSummary = '';
+        }
+
+        $intro = "📥 پرونده فعلی کوچینگ"
+            . ($lastSummary !== '' ? "\n{$lastSummary}" : '')
+            . "\n\nمتن کامل JSON:";
+        $this->api->sendMessage($chatId, $intro);
+        $this->sendLongMessage($chatId, (string) $profileJson);
+        $this->api->sendMessageWithKeyboard($chatId,
+            "برای به‌روزرسانی، «🔄 آپدیت پرونده کوچینگ» را بزن.",
+            $this->mainMenuKeyboard($chatId, $platform));
+    }
 
     /**
      * دکمه‌ی «🔄 آپدیت پرونده کوچینگ»: پرامت آماده را با پرونده فعلی + اطلاعات جدید می‌دهد
