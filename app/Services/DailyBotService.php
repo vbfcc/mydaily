@@ -1941,7 +1941,7 @@ class DailyBotService
     {
         $state = $this->getState($chatId, $platform);
         if (!$state || $state->state !== 'waiting_coaching_json') {
-            $this->api->sendMessage($chatId, "فلو آپدیت فعال نیست.\nبرای شروع «🔄 آپدیت پرونده کوچینگ» را بزن.");
+            $this->api->sendMessage($chatId, "✅ کاری برای انجام نیست — فلوی آپدیت فعالی نیست و پرونده‌ی ذخیره‌شده سر جایش است؛ چیزی گم نشده.\n\nبرای گرفتن آپدیت جدید «🔄 آپدیت پرونده کوچینگ» را بزن.");
             return;
         }
         $data = $state->data ?? [];
