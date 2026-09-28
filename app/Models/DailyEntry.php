@@ -18,6 +18,8 @@ class DailyEntry extends Model
         'social',
         'mood',
         'emotional_trigger',
+        'positive_trigger',
+        'positive_intensity',
     ];
 
     protected $casts = [
@@ -27,5 +29,6 @@ class DailyEntry extends Model
         'work_hours' => 'decimal:1',
         'mood' => 'integer',
         'gaming_minutes' => 'integer',
+        'positive_intensity' => 'integer',
     ];
 }
