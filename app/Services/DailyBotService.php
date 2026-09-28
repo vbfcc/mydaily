@@ -976,7 +976,7 @@ class DailyBotService
                 break;
 
             case 'waiting_coaching_json':
-                $this->handleCoachingJsonInput($chatId, $platform, $input);
+                $this->handleCoachingJsonInput($chatId, $platform, $input, $state);
                 break;
 
             case 'waiting_routine_title':
@@ -1650,6 +1650,26 @@ class DailyBotService
 
     // ── Coaching profile (پرونده واحد کوچینگ — دریافت + آپدیت) ──
 
+    private const COACHING_MAX_CHARS = 120000;
+
+    /**
+     * متن نمایشی پرونده: خود رشته‌ی ذخیره‌شده (تا `{}` خالی به `[]` تبدیل نشود).
+     * اگر رشته خراب بود، از روی آرایه دوباره ساخته می‌شود.
+     */
+    private function coachingDisplayJson(CoachingProfile $profile): string
+    {
+        $raw = trim((string) $profile->profile_json);
+        if ($raw !== '') {
+            try {
+                $decoded = json_decode($raw, true, 512, JSON_THROW_ON_ERROR);
+                if (is_array($decoded)) return $raw;
+            } catch (\Throwable $e) {
+                // fall through to rebuild
+            }
+        }
+        return (string) json_encode($profile->toProfileArray(), JSON_UNESCAPED_UNICODE | JSON_UNESCAPED_SLASHES | JSON_PRETTY_PRINT);
+    }
+
     /**
      * دکمه‌ی «📥 دریافت پرونده کوچینگ»: متن فعلی پرونده را می‌دهد (بدون شروع فلو آپدیت).
      */
@@ -1657,7 +1677,7 @@ class DailyBotService
     {
         $profile = CoachingProfile::getOrCreate($chatId, $platform);
         $profileArray = $profile->toProfileArray();
-        $profileJson = json_encode($profileArray, JSON_UNESCAPED_UNICODE | JSON_PRETTY_PRINT);
+        $profileJson = $this->coachingDisplayJson($profile);
 
         $lastSummary = '';
         try {
@@ -1688,7 +1708,7 @@ class DailyBotService
     {
         $profile = CoachingProfile::getOrCreate($chatId, $platform);
         $profileArray = $profile->toProfileArray();
-        $profileJson = json_encode($profileArray, JSON_UNESCAPED_UNICODE | JSON_PRETTY_PRINT);
+        $profileJson = $this->coachingDisplayJson($profile);
 
         $lastSummary = '';
         try {
@@ -1727,7 +1747,7 @@ class DailyBotService
         $intro = "🔄 آپدیت پرونده کوچینگ\n\n"
             . "روش کار (۳ قدم):\n"
             . "۱️⃣ پرامتی که الان می‌فرستم را کپی کن و در ChatGPT بفرست.\n"
-            . "۲️⃣ فقط JSON ای که ChatGPT داد را همین‌جا برایم بفرست (متن خالی، بدون توضیح).\n"
+            . "۲️⃣ فقط JSON ای که ChatGPT داد را همین‌جا برایم بفرست (اگر چند پیام شد، پشت سر هم بفرست).\n"
             . "۳️⃣ من آن را به‌عنوان نسخه جدید پرونده ذخیره می‌کنم.\n"
             . ($lastSummary !== '' ? "\n{$lastSummary}\n" : "\n")
             . "\nپرامت آماده (کپی کن):\n(برای لغو /cancel)";
@@ -1735,7 +1755,7 @@ class DailyBotService
         $this->setState($chatId, $platform, 'waiting_coaching_json', []);
         $this->api->sendMessage($chatId, $intro);
         $this->sendLongMessage($chatId, $prompt);
-        $this->api->sendMessage($chatId, "👆 پرامت بالا را در ChatGPT بفرست، بعد فقط JSON نهایی را همین‌جا بفرست تا ذخیره کنم.\n(برای لغو /cancel)");
+        $this->api->sendMessage($chatId, "👆 پرامت بالا را در ChatGPT بفرست، بعد فقط JSON نهایی را همین‌جا بفرست تا ذخیره کنم.\n(اگر پاسخت چند پیام شد، همه را پشت سر هم بفرست — هر قسمت را که بگیرم خبرت می‌کنم. برای شروع دوباره /cancel)");
     }
 
     /**
@@ -1837,51 +1857,139 @@ class DailyBotService
             $info['free_notes_recent'] = [];
         }
 
-        $json = json_encode($info, JSON_UNESCAPED_UNICODE | JSON_PRETTY_PRINT);
+        $json = json_encode($info, JSON_UNESCAPED_UNICODE | JSON_UNESCAPED_SLASHES | JSON_PRETTY_PRINT);
         return $json === false ? '{}' : (string) $json;
     }
 
     /**
      * دریافت JSON جدید از کاربر و ذخیره به‌عنوان نسخه جدید پرونده.
+     *
+     * خروجی ChatGPT ممکن است در چند پیام تلگرام تکه‌تکه برسد؛ پس هر پیام را به
+     * بافر state اضافه می‌کنیم و بعد از هر پیام، ترکیب کامل را امتحان می‌کنیم:
+     * کامل و سالم بود → ذخیره؛ ناقص بود → رسید را اعلام کن و منتظر ادامه بمان؛
+     * کامل ولی خراب بود → خطا بده و بافر را خالی کن تا پیام بعدی از نو شروع شود.
      */
-    private function handleCoachingJsonInput(string $chatId, string $platform, string $input): void
+    private function handleCoachingJsonInput(string $chatId, string $platform, string $input, BotState $state): void
     {
-        $candidate = trim($input);
+        $data = $state->data ?? [];
+        $parts = (isset($data['coaching_parts']) && is_array($data['coaching_parts']))
+            ? array_values($data['coaching_parts'])
+            : [];
 
-        // حذف فنس markdown اگر ChatGPT با ```json داده باشد
-        if (preg_match('/```(?:json)?\s*([\s\S]*?)\s*```/u', $candidate, $m)) {
-            $candidate = trim($m[1]);
-        }
+        $candidate = $this->stripCoachingFences(trim($input));
 
         if ($candidate === '') {
-            $this->api->sendMessage($chatId, "چیزی دریافت نکردم 😅\nفقط JSON نهایی ChatGPT را بفرست (متن خالی).\n(برای لغو /cancel)");
+            $this->api->sendMessage($chatId, "چیزی دریافت نکردم 😅\nفقط JSON نهایی ChatGPT را بفرست (اگر چند پیام شد، پشت سر هم بفرست).\n(برای لغو /cancel)");
             return;
         }
 
+        // ۱) شاید همین یک پیام کامل است (حالت عادی یا ارسال مجدد کل متن)
+        $decoded = $this->tryDecodeJson($candidate);
+        if (is_array($decoded) && $this->coachingShapeHits($decoded) >= 2) {
+            $this->saveCoachingProfile($chatId, $platform, $decoded);
+            return;
+        }
+
+        // ۲) به بافر بچسبان و ترکیب را امتحان کن (اتصال دقیق، بدون جداکننده:
+        // برش ممکن است وسط یک خط یا وسط یک رشته باشد و newline اضافه خرابش می‌کند)
+        $parts[] = $candidate;
+        $combined = $this->stripCoachingFences(implode('', $parts));
+
+        if (strlen($combined) > self::COACHING_MAX_CHARS) {
+            $this->setState($chatId, $platform, 'waiting_coaching_json', []);
+            $this->api->sendMessage($chatId, "متن خیلی بزرگ شد، از اول شروع می‌کنیم ❌\nJSON نهایی را دوباره بفرست (اگر چند پیام است، پشت سر هم).\n(برای لغو /cancel)");
+            return;
+        }
+
+        $decoded = $this->tryDecodeJson($combined);
+        if (is_array($decoded)) {
+            if ($this->coachingShapeHits($decoded) >= 2) {
+                $this->saveCoachingProfile($chatId, $platform, $decoded);
+                return;
+            }
+            // JSON سالم است ولی شبیه پرونده کوچینگ نیست
+            $this->setState($chatId, $platform, 'waiting_coaching_json', []);
+            $this->api->sendMessage($chatId, "این JSON شبیه پرونده کوچینگ نیست ❌\nباید همان ساختار پرونده فعلی را داشته باشد (بخش‌هایی مثل goals ،current_state ،strategy و last_update).\nخروجی ChatGPT را کامل کپی کن و بفرست (اگر چند پیام است، همه را پشت سر هم از اول بفرست).\n(برای لغو /cancel)");
+            return;
+        }
+
+        // ۳) ناقص است یا خراب؟
+        if (!$this->coachingBracketsBalanced($combined)) {
+            $this->setState($chatId, $platform, 'waiting_coaching_json', ['coaching_parts' => $parts]);
+            $n = count($parts);
+            $this->api->sendMessage($chatId, "قسمت {$n} رسید ✅\nادامه‌ی JSON را بفرست (تا کامل شود همین‌طور ادامه بده).\n(اگر می‌خواهی از اول شروع کنی /cancel بزن)");
+            return;
+        }
+
+        // کامل ولی خراب: خطا بده و بافر را خالی کن تا پیام بعدی تمیز شروع شود
+        $this->setState($chatId, $platform, 'waiting_coaching_json', []);
+        $this->api->sendMessage($chatId, "این متن JSON معتبر نیست ❌\nلطفا فقط JSON نهایی را کامل بفرست (بدون توضیح اضافه). اگر چند پیام است، همه را پشت سر هم از اول بفرست.\n(برای لغو /cancel)");
+    }
+
+    /**
+     * حذف فنس markdown (```json ... ```) — حتی اگر شروع و پایان در پیام‌های جدا باشند.
+     */
+    private function stripCoachingFences(string $text): string
+    {
+        $text = trim($text);
+        // خط شروع ```json یا ```
+        $text = (string) preg_replace('/\A```[a-zA-Z]*\s*/u', '', $text);
+        // خط پایانی ```
+        $text = (string) preg_replace('/\s*```\s*\z/u', '', $text);
+        return trim($text);
+    }
+
+    /** decode امن: نامعتبر بود null برمی‌گرداند. */
+    private function tryDecodeJson(string $text): mixed
+    {
         try {
-            $decoded = json_decode($candidate, true, 512, JSON_THROW_ON_ERROR);
+            return json_decode($text, true, 512, JSON_THROW_ON_ERROR);
         } catch (\Throwable $e) {
-            $this->api->sendMessage($chatId, "این متن JSON معتبر نیست ❌\nخطا: " . $e->getMessage() . "\n\nلطفا فقط JSON نهایی را بفرست (بدون توضیح اضافه). اگر داخل ``` است، همان را کامل کپی کن.\n(برای لغو /cancel)");
-            return;
+            return null;
         }
+    }
 
-        if (!is_array($decoded)) {
-            $this->api->sendMessage($chatId, "ساختار JSON درست نیست ❌\nJSON باید یک آبجکت (پرونده کوچینگ) باشد، نه لیست یا متن.\nدوباره بفرست. (برای لغو /cancel)");
-            return;
-        }
-
-        // اعتبارسنجی حداقلی: حداقل ۲ کلید از کلیدهای مورد انتظار + ساختار آبجکتی
-        $expected = CoachingProfile::expectedKeys();
+    /** تعداد کلیدهای سطح‌بالای پرونده کوچینگ داخل JSON. */
+    private function coachingShapeHits(mixed $decoded): int
+    {
+        if (!is_array($decoded)) return 0;
         $hits = 0;
-        foreach ($expected as $key) {
+        foreach (CoachingProfile::expectedKeys() as $key) {
             if (array_key_exists($key, $decoded)) $hits++;
         }
-        if ($hits < 2) {
-            $this->api->sendMessage($chatId, "این JSON شبیه پرونده کوچینگ نیست ❌\nباید همان ساختار پرونده فعلی را داشته باشد (بخش‌هایی مثل goals ،current_state ،strategy و last_update).\nخروجی ChatGPT را کامل کپی کن و بفرست. (برای لغو /cancel)");
-            return;
-        }
+        return $hits;
+    }
 
-        $pretty = json_encode($decoded, JSON_UNESCAPED_UNICODE | JSON_PRETTY_PRINT);
+    /**
+     * آیا آکولادها و براکت‌ها متوازن‌اند؟ (خارج از رشته‌ها، با احترام به escape)
+     * نامتوازن = متن به احتمال زیاد ناقص است و ادامه دارد.
+     */
+    private function coachingBracketsBalanced(string $text): bool
+    {
+        $depthCurly = 0; $depthSquare = 0;
+        $inString = false; $escaped = false;
+        $len = strlen($text);
+        for ($i = 0; $i < $len; $i++) {
+            $ch = $text[$i];
+            if ($inString) {
+                if ($escaped) $escaped = false;
+                elseif ($ch === '\\') $escaped = true;
+                elseif ($ch === '"') $inString = false;
+                continue;
+            }
+            if ($ch === '"') $inString = true;
+            elseif ($ch === '{') $depthCurly++;
+            elseif ($ch === '}') { $depthCurly--; if ($depthCurly < 0) return false; }
+            elseif ($ch === '[') $depthSquare++;
+            elseif ($ch === ']') { $depthSquare--; if ($depthSquare < 0) return false; }
+        }
+        return !$inString && $depthCurly === 0 && $depthSquare === 0;
+    }
+
+    /** ذخیره‌ی نسخه جدید پرونده + پیام موفقیت. */
+    private function saveCoachingProfile(string $chatId, string $platform, array $decoded): void
+    {
+        $pretty = json_encode($decoded, JSON_UNESCAPED_UNICODE | JSON_UNESCAPED_SLASHES | JSON_PRETTY_PRINT);
         if ($pretty === false) {
             $this->api->sendMessage($chatId, "خطا در ذخیره‌سازی ❌\nدوباره تلاش کن. (برای لغو /cancel)");
             return;
