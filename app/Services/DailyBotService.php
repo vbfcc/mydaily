@@ -355,6 +355,11 @@ class DailyBotService
             }
             return;
         }
+        // Coaching — «همین بود، ذخیره کن» زیر پیام رسید قسمت‌ها
+        if ($data === 'coaching:done') {
+            $this->finishCoachingFromBuffer($chatId, $platform);
+            return;
+        }
         if ($data === 'pf:share') {
             $this->sendShareCard($chatId, $platform);
             return;
@@ -1917,13 +1922,59 @@ class DailyBotService
         if (!$this->coachingBracketsBalanced($combined)) {
             $this->setState($chatId, $platform, 'waiting_coaching_json', ['coaching_parts' => $parts]);
             $n = count($parts);
-            $this->api->sendMessage($chatId, "قسمت {$n} رسید ✅\nادامه‌ی JSON را بفرست (تا کامل شود همین‌طور ادامه بده).\n(اگر می‌خواهی از اول شروع کنی /cancel بزن)");
+            $this->api->sendMessageWithInlineKeyboard($chatId,
+                "قسمت {$n} رسید ✅\nادامه‌ی JSON را بفرست (تا کامل شود همین‌طور ادامه بده).\n(اگر همین‌ها کامل است، دکمه‌ی زیر را بزن. برای شروع دوباره /cancel)",
+                [[['text' => '✅ همین بود، ذخیره کن', 'callback_data' => 'coaching:done']]]);
             return;
         }
 
         // کامل ولی خراب: خطا بده و بافر را خالی کن تا پیام بعدی تمیز شروع شود
         $this->setState($chatId, $platform, 'waiting_coaching_json', []);
         $this->api->sendMessage($chatId, "این متن JSON معتبر نیست ❌\nلطفا فقط JSON نهایی را کامل بفرست (بدون توضیح اضافه). اگر چند پیام است، همه را پشت سر هم از اول بفرست.\n(برای لغو /cancel)");
+    }
+
+    /**
+     * دکمه‌ی «✅ همین بود، ذخیره کن»: بافر فعلی را همان‌طور که هست امتحان می‌کند.
+     * برخلاف مسیر خودکار، اینجا بافر را دور نمی‌ریزیم تا کاربر بتواند ادامه بدهد یا اصلاح کند.
+     */
+    private function finishCoachingFromBuffer(string $chatId, string $platform): void
+    {
+        $state = $this->getState($chatId, $platform);
+        if (!$state || $state->state !== 'waiting_coaching_json') {
+            $this->api->sendMessage($chatId, "فلو آپدیت فعال نیست.\nبرای شروع «🔄 آپدیت پرونده کوچینگ» را بزن.");
+            return;
+        }
+        $data = $state->data ?? [];
+        $parts = (isset($data['coaching_parts']) && is_array($data['coaching_parts']))
+            ? array_values($data['coaching_parts'])
+            : [];
+
+        if ($parts === []) {
+            $this->api->sendMessage($chatId, "هنوز چیزی نفرستادی.\nJSON نهایی ChatGPT را بفرست (اگر چند پیام است، پشت سر هم).\n(برای لغو /cancel)");
+            return;
+        }
+
+        $combined = $this->stripCoachingFences(implode('', $parts));
+        $decoded = $this->tryDecodeJson($combined);
+        if (is_array($decoded) && $this->coachingShapeHits($decoded) >= 2) {
+            $this->saveCoachingProfile($chatId, $platform, $decoded);
+            return;
+        }
+
+        if (!$this->coachingBracketsBalanced($combined)) {
+            $n = count($parts);
+            $this->api->sendMessageWithInlineKeyboard($chatId,
+                "هنوز ناقص است ❌ ({$n} قسمت رسیده ولی JSON کامل نشده).\nادامه را بفرست تا کامل شود.\n(برای شروع دوباره /cancel)",
+                [[['text' => '✅ همین بود، ذخیره کن', 'callback_data' => 'coaching:done']]]);
+            return;
+        }
+
+        if (is_array($decoded)) {
+            $this->api->sendMessage($chatId, "این JSON شبیه پرونده کوچینگ نیست ❌\nبخش‌هایی مثل goals ،current_state ،strategy و last_update باید داخلش باشد.\nقسمت‌های رسیده نگه داشته شده — ادامه را بفرست یا با /cancel از اول شروع کن.");
+            return;
+        }
+
+        $this->api->sendMessage($chatId, "این متن JSON معتبر نیست ❌\nقسمت‌های رسیده نگه داشته شده — ادامه یا اصلاح را بفرست، یا با /cancel از اول شروع کن.");
     }
 
     /**
