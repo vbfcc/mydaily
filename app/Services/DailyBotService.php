@@ -1156,8 +1156,8 @@ class DailyBotService
                 }
                 $data['ai_ordered_on'] = $orderedOn;
                 $this->setState($chatId, $platform, 'waiting_ai_duration', $data);
-                $shamsi = \App\Helpers\ShamsiDateHelper::dateOnly(Carbon::parse($orderedOn));
-                $this->api->sendMessage($chatId, "خرید: {$shamsi} ({$orderedOn})\n"
+                $shamsi = $this->shamsiWithWeekday(Carbon::parse($orderedOn));
+                $this->api->sendMessage($chatId, "خرید: {$shamsi}\n"
                     . "⏳ مدتش چند روزه؟ (پیش‌فرض ۳۰ روز)\n"
                     . "فقط عدد بفرست (مثلا 30) یا /skip بزن برای پیش‌فرض.");
                 break;
@@ -2371,29 +2371,29 @@ class DailyBotService
             ->limit(10)
             ->get();
 
-        $lines = ["🤖 اکانت‌های هوش مصنوعی:\n"];
+        $lines = ["🤖 اکانت‌های هوش مصنوعی" . ($active->isEmpty() ? '' : " ({$active->count()} فعال)") . "\n"];
         if ($active->isEmpty()) {
             $lines[] = "فعلا اکانت فعالی نداری.";
         } else {
-            $lines[] = "فعال:";
             foreach ($active as $a) {
-                $buy = \App\Helpers\ShamsiDateHelper::dateOnly($a->ordered_on);
-                $end = \App\Helpers\ShamsiDateHelper::dateOnly($a->ends_on);
                 $left = Carbon::today()->diffInDays(Carbon::parse($a->ends_on)->toDateString(), false);
-                $leftTxt = $left === 0 ? 'امروز تموم میشه ⏰' : "{$left} روز مونده ⏳";
-                $lines[] = "• [{$a->id}] {$a->title} ({$a->duration_days} روزه)\n  📅 خرید: {$buy}\n  🏁 پایان: {$end} — {$leftTxt}";
+                $badge = $left === 0 ? '⏰ امروز تموم میشه!'
+                    : ($left <= 3 ? "🔴 فقط {$left} روز مونده!"
+                    : ($left <= 7 ? "🟡 {$left} روز مونده" : "🟢 {$left} روز مونده"));
+                $lines[] = "• [{$a->id}] {$a->title} ({$a->duration_days} روزه) — {$badge}";
+                $lines[] = "  📅 خرید: {$this->shamsiWithWeekday($a->ordered_on)}";
+                $lines[] = "  🏁 پایان: {$this->shamsiWithWeekday($a->ends_on)}";
             }
         }
         if (!$expired->isEmpty()) {
-            $lines[] = "\nتمام‌شده/حذف‌شده:";
+            $lines[] = "\n▫️ تمام‌شده/حذف‌شده:";
             foreach ($expired as $a) {
-                $end = \App\Helpers\ShamsiDateHelper::dateOnly($a->ends_on);
                 $tag = $a->is_active ? 'تمام‌شده' : 'حذف‌شده';
-                $lines[] = "• [{$a->id}] {$a->title} — پایان {$end} ({$tag})";
+                $lines[] = "• [{$a->id}] {$a->title} — پایان {$this->shamsiWithWeekday($a->ends_on)} ({$tag})";
             }
         }
-        $lines[] = "\nبرای ثبت اکانت جدید /ai_new را بزن.";
-        $lines[] = "حذف: /ai_stop ID";
+        $lines[] = "\n➕ ثبت جدید: /ai_new";
+        $lines[] = "🗑 حذف: /ai_stop ID";
 
         $this->api->sendMessageWithKeyboard($chatId, implode("\n", $lines), $this->mainMenuKeyboard($chatId, $platform));
     }
@@ -2435,10 +2435,24 @@ class DailyBotService
             'is_active' => true,
         ]);
         $this->clearState($chatId, $platform);
-        $shamsiBuy = \App\Helpers\ShamsiDateHelper::dateOnly(Carbon::parse($orderedOn));
-        $shamsiEnd = \App\Helpers\ShamsiDateHelper::dateOnly(Carbon::parse($endsOn));
-        $this->api->sendMessage($chatId, "✅ اکانت «{$account->title}» ثبت شد!\n📅 خرید: {$shamsiBuy}\n🏁 پایان: {$shamsiEnd} ({$durationDays} روزه)");
+        $shamsiBuy = $this->shamsiWithWeekday(Carbon::parse($orderedOn));
+        $shamsiEnd = $this->shamsiWithWeekday(Carbon::parse($endsOn));
+        $this->api->sendMessage($chatId, "✅ اکانت «{$account->title}» ثبت شد! ({$durationDays} روزه)\n📅 خرید: {$shamsiBuy}\n🏁 پایان: {$shamsiEnd}\n⏳ {$durationDays} روز مونده");
         $this->handleAiAccounts($chatId, $platform);
+    }
+
+    /**
+     * تاریخ شمسی عددی + روز هفته در پرانتز — مثلا: 1405/07/28 (سه‌شنبه ۲۸ مهر).
+     */
+    private function shamsiWithWeekday($date): string
+    {
+        $num = \App\Helpers\ShamsiDateHelper::dateOnly($date);
+        try {
+            $wd = Jalalian::forge($date)->format('l d F');
+        } catch (\Throwable $e) {
+            return (string) $num;
+        }
+        return "{$num} ({$wd})";
     }
 
     /**
