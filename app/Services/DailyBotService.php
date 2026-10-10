@@ -2375,22 +2375,26 @@ class DailyBotService
         if ($active->isEmpty()) {
             $lines[] = "فعلا اکانت فعالی نداری.";
         } else {
+            $blocks = [];
             foreach ($active as $a) {
                 $left = Carbon::today()->diffInDays(Carbon::parse($a->ends_on)->toDateString(), false);
                 $badge = $left === 0 ? '⏰ امروز تموم میشه!'
                     : ($left <= 3 ? "🔴 فقط {$left} روز مونده!"
                     : ($left <= 7 ? "🟡 {$left} روز مونده" : "🟢 {$left} روز مونده"));
-                $lines[] = "• [{$a->id}] {$a->title} ({$a->duration_days} روزه) — {$badge}";
-                $lines[] = "  📅 خرید: {$this->shamsiWithWeekday($a->ordered_on)}";
-                $lines[] = "  🏁 پایان: {$this->shamsiWithWeekday($a->ends_on)}";
+                $blocks[] = "• [{$a->id}] {$a->title} ({$a->duration_days} روزه) — {$badge}"
+                    . "\n  📅 خرید: {$this->shamsiWithWeekday($a->ordered_on)}"
+                    . "\n  🏁 پایان: {$this->shamsiWithWeekday($a->ends_on)}";
             }
+            $lines[] = implode("\n\n_____\n\n", $blocks);
         }
         if (!$expired->isEmpty()) {
             $lines[] = "\n▫️ تمام‌شده/حذف‌شده:";
+            $old = [];
             foreach ($expired as $a) {
                 $tag = $a->is_active ? 'تمام‌شده' : 'حذف‌شده';
-                $lines[] = "• [{$a->id}] {$a->title} — پایان {$this->shamsiWithWeekday($a->ends_on)} ({$tag})";
+                $old[] = "• [{$a->id}] {$a->title} — پایان {$this->shamsiWithWeekday($a->ends_on)} ({$tag})";
             }
+            $lines[] = implode("\n\n_____\n\n", $old);
         }
         $lines[] = "\n➕ ثبت جدید: /ai_new";
         $lines[] = "🗑 حذف: /ai_stop ID";
