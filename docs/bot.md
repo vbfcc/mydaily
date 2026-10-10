@@ -148,6 +148,14 @@ chat_id=111/platform=bale      ──► ردیف جدا (حتی اگر chat_id 
 - لاگ هر روز در `routine_logs` (`UNIQUE(routine_id, entry_date)` — ثبت دوباره overwrite). توقف، لاگ‌های قبلی را نگه می‌دارد.
 - نمایش: `/today` و پیام `✅ ثبت شد!` بخش `🔁 روتین‌ها` دارند؛ `/week` زیر هر روز؛ خروجی JSON هر رکورد فیلد `routines: [{title, done, done_bool, note}]` دارد.
 
+## اکانت‌های هوش مصنوعی (AI Accounts)
+
+- دکمه‌ی منوی اصلی `🤖 اکانت‌ها` + دستورات `/ai` (لیست)، `/ai_new` یا `➕ اکانت جدید` (ثبت)، `/ai_stop ID` (حذف).
+- ویزارد ۳ مرحله‌ای: اسم (`waiting_ai_title`) ← تاریخ خرید (`waiting_ai_date`: امروز/دیروز، شمسی `1405/07/18` یا میلادی — از `parseRoutineDate` استفاده می‌کند) ← مدت به روز (`waiting_ai_duration`: فقط عدد ۱-۳۶۵، پیش‌فرض ۳۰ روزه با `/skip`).
+- جدول `ai_accounts`: `chat_id`, `platform`, `title(100)`, `ordered_on(date)`, `duration_days(int, default 30)`, `ends_on(date) = ordered_on + duration_days`, `is_active(bool)` — مدل: `app/Models/AiAccount.php`.
+- لیست (`/ai`): فعال‌ها با تاریخ خرید و پایان **شمسی** + روزهای باقی‌مانده، بعد تمام‌شده/حذف‌شده‌ها.
+- نکته: کلمات «امروز/دیروز» داخل استیت‌های تاریخ (`waiting_ai_date`, `waiting_routine_start/end`) به‌عنوان مقدار تاریخ پذیرفته می‌شوند و وارد فلو ثبت روزانه نمی‌شوند.
+
 ## یادآورها
 
 - `php artisan bot:remind-midnight` (`--dry-run` برای تست) — به همه‌ی `bot_subscribers` (هر چتی که تا حالا پیام داده، با `touchSubscriber` ثبت می‌شود) پیام می‌دهد: «⏰ ساعت ۱۲ شب شد! بیا گزارش امروز رو پر کن 📝» + اگر دیروز ثبت نشده، تذکر جاماندن دیروز.

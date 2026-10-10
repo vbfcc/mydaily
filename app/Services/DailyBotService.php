@@ -2,6 +2,7 @@
 
 namespace App\Services;
 
+use App\Models\AiAccount;
 use App\Models\BotState;
 use App\Models\BotSubscriber;
 use App\Models\CoachingProfile;
@@ -105,6 +106,17 @@ class DailyBotService
             || $text === '/get_coaching';
     }
 
+    private function isAiText(string $text): bool
+    {
+        return $text === '🤖 اکانت‌ها'
+            || $text === '🤖 اکانت های هوش مصنوعی'
+            || $text === '🤖 اکانت‌های هوش مصنوعی'
+            || str_starts_with($text, '🤖 اکانت')
+            || $text === '/ai'
+            || $text === '/ai_accounts'
+            || $text === '/accounts';
+    }
+
     // ── Public entry point for every incoming message ──
 
     public function handle(string $chatId, string $platform, string $text, ?string $username = null): void
@@ -124,7 +136,7 @@ class DailyBotService
             }
             // Allow hard commands to interrupt CBT flow
             $isDirectDayBtn = str_starts_with($text, '📝 دیروز') || str_starts_with($text, '📝 امروز') || $text === 'دیروز' || $text === 'امروز';
-            if (in_array($text, ['/start', '/today', '/week', '/log', '/export', '/help', '/routine', '/routines', '🔁 روتین‌ها', '/profile', '👤 حساب کاربری', '👤 پروفایل', '🧠 دفترچه فکر و احساس', '/cbt', '/thought', '/fekr', '📌 نکته', 'نکته', '/note', '/notes', '/nokte', '✍️ توضیحات آزاد', 'توضیحات آزاد', '/freenote', '/free', '/azad', '/desc', '🔄 آپدیت پرونده کوچینگ', '/coaching', '/coach', '📥 دریافت پرونده کوچینگ', '/coaching_get', '/get_coaching']) || $isDirectDayBtn || $this->isCbtText($text) || $this->isNoteText($text) || $this->isFreeNoteText($text) || $this->isCoachingText($text) || $this->isCoachingGetText($text)) {
+            if (in_array($text, ['/start', '/today', '/week', '/log', '/export', '/help', '/routine', '/routines', '🔁 روتین‌ها', '/ai', '/ai_new', '🤖 اکانت‌ها', '➕ اکانت جدید', '/profile', '👤 حساب کاربری', '👤 پروفایل', '🧠 دفترچه فکر و احساس', '/cbt', '/thought', '/fekr', '📌 نکته', 'نکته', '/note', '/notes', '/nokte', '✍️ توضیحات آزاد', 'توضیحات آزاد', '/freenote', '/free', '/azad', '/desc', '🔄 آپدیت پرونده کوچینگ', '/coaching', '/coach', '📥 دریافت پرونده کوچینگ', '/coaching_get', '/get_coaching']) || $isDirectDayBtn || $this->isCbtText($text) || $this->isNoteText($text) || $this->isFreeNoteText($text) || $this->isCoachingText($text) || $this->isCoachingGetText($text) || $this->isAiText($text)) {
                 $cbt->clear($chatId, $platform);
                 // fall through to normal handling (also clear BotState if needed below)
                 $this->clearState($chatId, $platform);
@@ -158,8 +170,14 @@ class DailyBotService
 
         // If in a flow, handle step input before checking other commands
         if ($state && $state->state !== null) {
+            // Date inputs (AI purchase date, routine start/end) accept «امروز/دیروز» as values — don't hijack them into daily logging
+            if (in_array($state->state, ['waiting_ai_date', 'waiting_routine_start', 'waiting_routine_end'], true)) {
+                if (str_starts_with($text, '📝 دیروز') || $text === 'دیروز') $text = 'دیروز';
+                elseif ((str_starts_with($text, '📝 امروز') && $text !== '📝 ثبت امروز') || $text === 'امروز') $text = 'امروز';
+                $isDirectDayBtn = false;
+            }
             // Allow /start /today /week /export /routine /note /freenote /coaching + direct day buttons + CBT to interrupt flow
-            if (in_array($text, ['/start', '/today', '/week', '/log', '/export', '/help', '/routine', '/routines', '🔁 روتین‌ها', '/profile', '👤 حساب کاربری', '🧠 دفترچه فکر و احساس', '/cbt', '📌 نکته', 'نکته', '/note', '/notes', '/nokte', '✍️ توضیحات آزاد', 'توضیحات آزاد', '/freenote', '/free', '/azad', '/desc', '🔄 آپدیت پرونده کوچینگ', '/coaching', '/coach', '📥 دریافت پرونده کوچینگ', '/coaching_get', '/get_coaching']) || $isDirectDayBtn || $this->isCbtText($text) || $this->isNoteText($text) || $this->isFreeNoteText($text) || $this->isCoachingText($text) || $this->isCoachingGetText($text)) {
+            if (in_array($text, ['/start', '/today', '/week', '/log', '/export', '/help', '/routine', '/routines', '🔁 روتین‌ها', '/ai', '/ai_new', '🤖 اکانت‌ها', '➕ اکانت جدید', '/profile', '👤 حساب کاربری', '🧠 دفترچه فکر و احساس', '/cbt', '📌 نکته', 'نکته', '/note', '/notes', '/nokte', '✍️ توضیحات آزاد', 'توضیحات آزاد', '/freenote', '/free', '/azad', '/desc', '🔄 آپدیت پرونده کوچینگ', '/coaching', '/coach', '📥 دریافت پرونده کوچینگ', '/coaching_get', '/get_coaching']) || $isDirectDayBtn || $this->isCbtText($text) || $this->isNoteText($text) || $this->isFreeNoteText($text) || $this->isCoachingText($text) || $this->isCoachingGetText($text) || $this->isAiText($text)) {
                 $this->clearState($chatId, $platform);
                 // fall through to command handling below
             } else {
@@ -194,6 +212,20 @@ class DailyBotService
         if (str_starts_with($text, '/routine_stop')) {
             $parts = preg_split('/\s+/', trim($text));
             $this->handleRoutineStop($chatId, $platform, $parts[1] ?? null);
+            return;
+        }
+        // AI accounts commands
+        if ($this->isAiText($text)) {
+            $this->handleAiAccounts($chatId, $platform);
+            return;
+        }
+        if ($text === '/ai_new' || $text === '➕ اکانت جدید') {
+            $this->startAiAccountWizard($chatId, $platform);
+            return;
+        }
+        if (str_starts_with($text, '/ai_stop')) {
+            $parts = preg_split('/\s+/', trim($text));
+            $this->handleAiAccountStop($chatId, $platform, $parts[1] ?? null);
             return;
         }
         if ($this->isCbtText($text)) {
@@ -306,6 +338,11 @@ class DailyBotService
             $text === '🔄 آپدیت پرونده کوچینگ' => $this->showCoachingUpdate($chatId, $platform),
             $text === '/coaching' => $this->showCoachingUpdate($chatId, $platform),
             $text === '/coach' => $this->showCoachingUpdate($chatId, $platform),
+            $text === '🤖 اکانت‌ها' => $this->handleAiAccounts($chatId, $platform),
+            $text === '/ai' => $this->handleAiAccounts($chatId, $platform),
+            $text === '/ai_accounts' => $this->handleAiAccounts($chatId, $platform),
+            $text === '➕ اکانت جدید' => $this->startAiAccountWizard($chatId, $platform),
+            $text === '/ai_new' => $this->startAiAccountWizard($chatId, $platform),
             $text === '📥 دریافت پرونده کوچینگ' => $this->showCoachingFile($chatId, $platform),
             $text === '/coaching_get' => $this->showCoachingFile($chatId, $platform),
             $text === '/get_coaching' => $this->showCoachingFile($chatId, $platform),
@@ -408,6 +445,7 @@ class DailyBotService
             . "/today — نمایش ثبت امروز\n"
             . "/week — نمایش ۷ روز گذشته\n"
             . "/routine — مدیریت روتین‌ها (مثل روتین پوستی با تاریخ شروع/پایان)\n"
+            . "/ai — اکانت‌های هوش مصنوعی (ثبت تاریخ خرید + مدت، پیش‌فرض ۳۰ روزه)\n"
             . "/cbt — دفترچه فکر و احساس (CBT) — روانشناس گفته هر بار حس منفی داشتی، این جدول رو پر کن\n"
             . "/note — نکته‌ها (یادداشت با اسم، متن تا ۱۵۰۰ حرف)\n"
             . "/freenote — توضیحات آزاد (بدون تایتل؛ با تاریخ شمسی در خروجی JSON می‌آید)\n"
@@ -479,6 +517,7 @@ class DailyBotService
                 ['📄 JSON', '🔁 روتین‌ها'],
                 ['🧠 دفترچه فکر و احساس', '📌 نکته'],
                 ['✍️ توضیحات آزاد', '👤 حساب کاربری'],
+                ['🤖 اکانت‌ها'],
                 ['📥 دریافت پرونده کوچینگ', '🔄 آپدیت پرونده کوچینگ'],
             ];
         }
@@ -487,7 +526,7 @@ class DailyBotService
             ['📅 هفته', '📄 JSON'],
             ['🔁 روتین‌ها', '🧠 دفترچه فکر و احساس'],
             ['📌 نکته', '✍️ توضیحات آزاد'],
-            ['👤 حساب کاربری'],
+            ['👤 حساب کاربری', '🤖 اکانت‌ها'],
             ['📥 دریافت پرونده کوچینگ', '🔄 آپدیت پرونده کوچینگ'],
         ];
     }
@@ -828,8 +867,8 @@ class DailyBotService
 
         $input = trim($input);
 
-        // Handle /skip for emotional_trigger, positive steps and routine notes
-        if (in_array($current, ['waiting_trigger', 'waiting_positive_trigger', 'waiting_positive_intensity', 'waiting_routine_note'], true)
+        // Handle /skip for emotional_trigger, positive steps, routine notes and AI duration (default 30)
+        if (in_array($current, ['waiting_trigger', 'waiting_positive_trigger', 'waiting_positive_intensity', 'waiting_routine_note', 'waiting_ai_duration'], true)
             && ($input === '/skip' || $input === 'skip' || $input === '-')) {
             if ($current === 'waiting_trigger') {
                 $data['emotional_trigger'] = null;
@@ -841,6 +880,8 @@ class DailyBotService
             } elseif ($current === 'waiting_positive_intensity') {
                 $data['positive_intensity'] = null;
                 $this->proceedToRoutinesOrSave($chatId, $platform, $data);
+            } elseif ($current === 'waiting_ai_duration') {
+                $this->finishAiAccountWizard($chatId, $platform, $data, 30);
             } else {
                 $this->handleRoutineNote($chatId, $platform, $data, null);
             }
@@ -1092,6 +1133,42 @@ class DailyBotService
 
             case 'waiting_routine_note':
                 $this->handleRoutineNote($chatId, $platform, $data, mb_substr($input, 0, 500));
+                break;
+
+            case 'waiting_ai_title':
+                $title = mb_substr(trim($input), 0, 100);
+                if ($title === '') {
+                    $this->api->sendMessage($chatId, "اسم اکانت خالیه 😅\nمثلا بنویس: ChatGPT Plus");
+                    return;
+                }
+                $this->setState($chatId, $platform, 'waiting_ai_date', ['ai_title' => $title]);
+                $todayShamsi = \App\Helpers\ShamsiDateHelper::dateOnly(Carbon::today());
+                $this->api->sendMessage($chatId, "📅 تاریخ خرید «{$title}» کی بود؟\n"
+                    . "مثلا: امروز، دیروز، 1405/07/18 (شمسی) یا 2026-10-10 (میلادی)\n"
+                    . "(امروز: {$todayShamsi})");
+                break;
+
+            case 'waiting_ai_date':
+                $orderedOn = $this->parseRoutineDate($input);
+                if ($orderedOn === null) {
+                    $this->api->sendMessage($chatId, "تاریخ رو نفهمیدم 😅\nمثلا: امروز، دیروز، 1405/07/18 یا 2026-10-10");
+                    return;
+                }
+                $data['ai_ordered_on'] = $orderedOn;
+                $this->setState($chatId, $platform, 'waiting_ai_duration', $data);
+                $shamsi = \App\Helpers\ShamsiDateHelper::dateOnly(Carbon::parse($orderedOn));
+                $this->api->sendMessage($chatId, "خرید: {$shamsi} ({$orderedOn})\n"
+                    . "⏳ مدتش چند روزه؟ (پیش‌فرض ۳۰ روز)\n"
+                    . "فقط عدد بفرست (مثلا 30) یا /skip بزن برای پیش‌فرض.");
+                break;
+
+            case 'waiting_ai_duration':
+                $duration = $this->parseAiDuration($input);
+                if ($duration === null) {
+                    $this->api->sendMessage($chatId, "مدت رو نفهمیدم 😅\nفقط عدد بفرست بین ۱ تا ۳۶۵ (مثلا 30) یا /skip برای پیش‌فرض ۳۰ روزه:");
+                    return;
+                }
+                $this->finishAiAccountWizard($chatId, $platform, $data, $duration);
                 break;
 
             case 'waiting_note_title':
@@ -2266,6 +2343,117 @@ class DailyBotService
         $routine->update(['is_active' => false]);
         $this->api->sendMessage($chatId, "⏹ روتین «{$routine->title}» متوقف شد.\nلاگ‌های قبلی سر جاشون می‌مونن.");
         $this->handleRoutines($chatId, $platform);
+    }
+
+    // ── AI accounts (اکانت‌های هوش مصنوعی: تاریخ خرید + مدت، پایان شمسی) ──
+
+    private function startAiAccountWizard(string $chatId, string $platform): void
+    {
+        $this->setState($chatId, $platform, 'waiting_ai_title', []);
+        $this->api->sendMessage($chatId, "🤖 اکانت جدید!\n\nاسم اکانت چیه؟\nمثلا: ChatGPT Plus یا Claude Pro\n(برای لغو /cancel)");
+    }
+
+    private function handleAiAccounts(string $chatId, string $platform): void
+    {
+        $today = Carbon::today()->toDateString();
+        $active = AiAccount::where('chat_id', $chatId)
+            ->where('platform', $platform)
+            ->where('is_active', true)
+            ->whereDate('ends_on', '>=', $today)
+            ->orderBy('ends_on')
+            ->get();
+        $expired = AiAccount::where('chat_id', $chatId)
+            ->where('platform', $platform)
+            ->where(function ($q) use ($today) {
+                $q->where('is_active', false)->orWhereDate('ends_on', '<', $today);
+            })
+            ->orderByDesc('ends_on')
+            ->limit(10)
+            ->get();
+
+        $lines = ["🤖 اکانت‌های هوش مصنوعی:\n"];
+        if ($active->isEmpty()) {
+            $lines[] = "فعلا اکانت فعالی نداری.";
+        } else {
+            $lines[] = "فعال:";
+            foreach ($active as $a) {
+                $buy = \App\Helpers\ShamsiDateHelper::dateOnly($a->ordered_on);
+                $end = \App\Helpers\ShamsiDateHelper::dateOnly($a->ends_on);
+                $left = Carbon::today()->diffInDays(Carbon::parse($a->ends_on)->toDateString(), false);
+                $leftTxt = $left === 0 ? 'امروز تموم میشه ⏰' : "{$left} روز مونده ⏳";
+                $lines[] = "• [{$a->id}] {$a->title} ({$a->duration_days} روزه)\n  📅 خرید: {$buy}\n  🏁 پایان: {$end} — {$leftTxt}";
+            }
+        }
+        if (!$expired->isEmpty()) {
+            $lines[] = "\nتمام‌شده/حذف‌شده:";
+            foreach ($expired as $a) {
+                $end = \App\Helpers\ShamsiDateHelper::dateOnly($a->ends_on);
+                $tag = $a->is_active ? 'تمام‌شده' : 'حذف‌شده';
+                $lines[] = "• [{$a->id}] {$a->title} — پایان {$end} ({$tag})";
+            }
+        }
+        $lines[] = "\nبرای ثبت اکانت جدید /ai_new را بزن.";
+        $lines[] = "حذف: /ai_stop ID";
+
+        $this->api->sendMessageWithKeyboard($chatId, implode("\n", $lines), $this->mainMenuKeyboard($chatId, $platform));
+    }
+
+    private function handleAiAccountStop(string $chatId, string $platform, ?string $id): void
+    {
+        if (!$id || !ctype_digit((string) $id)) {
+            $this->api->sendMessage($chatId, "آیدی اکانت رو بفرست: /ai_stop ID\n(آیدی‌ها رو با /ai ببین)");
+            return;
+        }
+        $account = AiAccount::where('chat_id', $chatId)
+            ->where('platform', $platform)
+            ->where('id', (int) $id)
+            ->first();
+        if (!$account) {
+            $this->api->sendMessage($chatId, "اکانتی با این آیدی پیدا نکردم.");
+            return;
+        }
+        if (!$account->is_active) {
+            $this->api->sendMessage($chatId, "«{$account->title}» قبلا حذف شده.");
+            return;
+        }
+        $account->update(['is_active' => false]);
+        $this->api->sendMessage($chatId, "🗑 اکانت «{$account->title}» حذف شد.");
+        $this->handleAiAccounts($chatId, $platform);
+    }
+
+    private function finishAiAccountWizard(string $chatId, string $platform, array $data, int $durationDays): void
+    {
+        $orderedOn = $data['ai_ordered_on'] ?? Carbon::today()->toDateString();
+        $endsOn = Carbon::parse($orderedOn)->addDays($durationDays)->toDateString();
+        $account = AiAccount::create([
+            'chat_id' => $chatId,
+            'platform' => $platform,
+            'title' => $data['ai_title'],
+            'ordered_on' => $orderedOn,
+            'duration_days' => $durationDays,
+            'ends_on' => $endsOn,
+            'is_active' => true,
+        ]);
+        $this->clearState($chatId, $platform);
+        $shamsiBuy = \App\Helpers\ShamsiDateHelper::dateOnly(Carbon::parse($orderedOn));
+        $shamsiEnd = \App\Helpers\ShamsiDateHelper::dateOnly(Carbon::parse($endsOn));
+        $this->api->sendMessage($chatId, "✅ اکانت «{$account->title}» ثبت شد!\n📅 خرید: {$shamsiBuy}\n🏁 پایان: {$shamsiEnd} ({$durationDays} روزه)");
+        $this->handleAiAccounts($chatId, $platform);
+    }
+
+    /**
+     * پارس مدت اشتراک: عدد ۱-۳۶۵ با/بدون «روز» — ارقام فارسی هم قبول است.
+     * خروجی int یا null.
+     */
+    private function parseAiDuration(string $input): ?int
+    {
+        $fa = str_replace(['۰','۱','۲','۳','۴','۵','۶','۷','۸','۹','٠','١','٢','٣','٤','٥','٦','٧','٨','٩'],
+            ['0','1','2','3','4','5','6','7','8','9'], trim($input));
+        if (preg_match('/^(\d{1,3})\s*(روز|days?)?$/ui', trim($fa), $m)) {
+            $n = (int) $m[1];
+            if ($n >= 1 && $n <= 365) return $n;
+        }
+        return null;
     }
 
     /** بعد از آخرین سوال گزارش: اگر روتین فعال هست، وارد سوال‌های روتین شو وگرنه ذخیره کن. */
